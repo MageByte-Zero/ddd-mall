@@ -45,9 +45,16 @@ ddd-mall/
 
 - JDK 21（`/usr/libexec/java_home -v 21` 可用）
 - Docker runtime（Docker Desktop 或 Colima）
-- Maven 3.8+
+- Maven 3.8+（或直接用仓库自带的 `./mvnw`，会自动下载）
 
-### 1. 启动中间件
+### 1. 克隆仓库
+
+```bash
+git clone https://github.com/MageByte-Zero/ddd-mall.git
+cd ddd-mall
+```
+
+### 2. 启动中间件
 
 ```bash
 cd docker-compose
@@ -55,19 +62,18 @@ docker compose up -d
 docker compose ps   # 8 个容器 Up（Seata 在 AT 讲次前可暂不启用）
 ```
 
-### 2. 编译
+### 3. 编译
 
 ```bash
-# 必须用 JDK 21
+# 必须用 JDK 21；./mvnw 会自动下载 Maven 3.9.9
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
-mvn clean install
+./mvnw clean install -DskipTests
 ```
 
-### 3. 启动核心域
+### 4. 启动核心域
 
 ```bash
-cd mall-order
-mvn spring-boot:run
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -pl mall-order spring-boot:run
 # 启动后访问 http://localhost:8084/actuator/health
 # Nacos 控制台：http://localhost:8848/nacos （nacos/nacos）
 ```

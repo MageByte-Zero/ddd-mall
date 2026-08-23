@@ -1,0 +1,126 @@
+# DDD 教学项目中间件集合
+# 启动：docker compose -f docker-compose.yml up -d
+# 停止：docker compose -f docker-compose.yml down
+# 清理数据：docker compose -f docker-compose.yml down -v
+
+services:
+  mysql:
+    image: mysql:8.0.39
+    container_name: ddd-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ddd_root_2026
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pddd_root_2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nacos:
+    image: nacos/nacos-server:v2.4.2
+    container_name: ddd-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+      TZ: Asia/Shanghai
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    volumes:
+      - nacos_data:/home/nacos/data
+      - nacos_logs:/home/nacos/logs
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: ddd-rocketmq-namesrv
+    restart: unless-stopped
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rocketmq_namesrv_logs:/home/rocketmq/logs
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.1
+    container_name: ddd-rocketmq-broker
+    restart: unless-stopped
+    depends_on:
+      - rocketmq-namesrv
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    # 教学环境用 root 启动，规避 named volume 默认 root:root 导致 rocketmq 用户写不进 store
+    user: root
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/rocketmq-2.properties
+    ports:
+      - "10911:10911"
+      - "10912:10912"
+    volumes:
+      - rocketmq_broker_logs:/home/rocketmq/logs
+      - rocketmq_store:/home/rocketmq/store
+      - ./rocketmq/broker.properties:/home/rocketmq/rocketmq-2.properties:ro
+
+  rocketmq-console:
+    image: styletang/rocketmq-console-ng:1.0.0
+    container_name: ddd-rocketmq-console
+    restart: unless-stopped
+    depends_on:
+      - rocketmq-namesrv
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false"
+    ports:
+      - "8080:8080"
+
+  seata-server:
+    image: seataio/seata-server:2.0.0
+    container_name: ddd-seata
+    restart: unless-stopped
+    environment:
+      SEATA_PORT: 8091
+      TZ: Asia/Shanghai
+    ports:
+      - "7091:7091"
+      - "8091:8091"
+    volumes:
+      - seata_data:/seata-server
+      - ./seata/application.yml:/seata-server/resources/application.yml:ro
+      - ./seata/registry.conf:/seata-server/resources/registry.conf:ro
+
+  sentinel-dashboard:
+    image: bladex/sentinel-dashboard:1.8.8
+    container_name: ddd-sentinel
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Dserver.port=8858"
+    ports:
+      - "8858:8858"
+
+  zipkin:
+    image: openzipkin/zipkin:3.4.0
+    container_name: ddd-zipkin
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx256m"
+    ports:
+      - "9411:9411"
+
+volumes:
+  mysql_data:
+  nacos_data:
+  nacos_logs:
+  rocketmq_namesrv_logs:
+  rocketmq_broker_logs:
+  rocketmq_store:
+  seata_data:

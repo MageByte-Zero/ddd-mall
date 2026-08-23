@@ -1,0 +1,38 @@
+server:
+  port: 7091
+
+spring:
+  application:
+    name: seata-server
+
+logging:
+  config: classpath:logback-spring.xml
+  file:
+    path: ${user.home}/logs/seata
+  level:
+    io.seata: info
+
+seata:
+  config:
+    type: nacos
+    nacos:
+      server-addr: localhost:8848
+      namespace:
+      group: SEATA_GROUP
+      username: nacos
+      password: nacos
+  registry:
+    type: nacos
+    nacos:
+      application: seata-server
+      server-addr: localhost:8848
+      namespace:
+      group: SEATA_GROUP
+      username: nacos
+      password: nacos
+  store:
+    mode: file
+  server:
+    service-port: 8091
+    max-commit-retry-timeout: 100
+    max-rollback-retry-timeout: 100

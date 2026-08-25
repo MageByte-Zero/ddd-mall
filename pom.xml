@@ -31,6 +31,7 @@
         <rocketmq-spring.version>2.3.1</rocketmq-spring.version>
         <seata-spring-boot.version>2.0.0</seata-spring-boot.version>
         <sentinel-version>1.8.8</sentinel-version>
+        <archunit.version>1.4.1</archunit.version>
     </properties>
 
     <dependencyManagement>
@@ -55,6 +56,11 @@
                 <version>${mybatis-plus.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit5</artifactId>
+                <version>${archunit.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -16,7 +16,7 @@ spring:
       discovery:
         server-addr: localhost:8848
       config:
-        # L4 不用 Nacos 配置中心；骨架阶段只用本地 application.yml
+        # 骨架阶段只用本地 application.yml；第 20 讲引入 Nacos 配置中心时反转此开关
         enabled: false
         server-addr: localhost:8848
         file-extension: yaml

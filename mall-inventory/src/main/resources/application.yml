@@ -1,0 +1,38 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: mall-inventory
+  profiles:
+    active: dev
+  datasource:
+    url: jdbc:mysql://localhost:3306/mall_inventory?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: ddd_root_2026
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+      config:
+        # L4 不用 Nacos 配置中心；骨架阶段只用本地 application.yml
+        enabled: false
+        server-addr: localhost:8848
+        file-extension: yaml
+        import-check:
+          enabled: false
+  flyway:
+    # 库存 schema 在第 12 讲（库存预占与释放）才建表；此前 Flyway 保持关闭
+    enabled: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: AUTO
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0

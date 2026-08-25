@@ -28,7 +28,7 @@
 
 ```
 ddd-mall/
-├── mall-commons/      # 公共：BaseEntity、统一异常、工具类（无 DB）
+├── mall-commons/      # 公共模块（当前为空，随讲次按需放入无业务公共代码）
 ├── mall-product/      # 商品 BC（通用域，port 8081）
 ├── mall-inventory/    # 库存 BC（支撑域，port 8082）
 ├── mall-payment/      # 支付 BC（支撑域，port 8083）
@@ -38,6 +38,8 @@ ddd-mall/
 ├── docs/adr/          # 架构决策记录
 └── evals/             # 压测、契约测试脚本
 ```
+
+四个业务模块内部统一采用 DDD 四层包结构（接口层 `interfaces` / 应用层 `application` / 领域层 `domain` / 基础设施层 `infrastructure`），层间依赖方向由 mall-order 的 ArchUnit 测试自动守护。
 
 ## 快速开始
 
@@ -74,18 +76,34 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 ```bash
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -pl mall-order spring-boot:run
-# 启动后访问 http://localhost:8084/actuator/health
-# Nacos 控制台：http://localhost:8848/nacos （nacos/nacos）
+# 启动成功后到 Nacos 控制台确认注册：http://localhost:8848/nacos （nacos/nacos）
 ```
+
+## 按讲阅读代码：lesson tag 快照
+
+本仓库随课程**螺旋式演进**：`main` 分支永远是最新、可运行的完整状态；每一讲结束时的代码状态打一个 `lesson-NN` tag，作为不可变快照。对照某一讲的文章实践时，切到对应 tag：
+
+```bash
+git clone https://github.com/MageByte-Zero/ddd-mall.git
+cd ddd-mall
+git checkout lesson-05   # 切到第 5 讲结束时的代码快照
+git checkout main        # 回到最新状态
+```
+
+| tag | 对应讲次 | 代码状态 |
+|---|---|---|
+| `lesson-04` | 第 4 讲 | 4 BC 骨架：启动类 + 配置 + mall-order Flyway V1，4 应用注册 Nacos |
+| `lesson-05` | 第 5 讲 | 4 BC 四层包结构 + ArchUnit 依赖方向守护 |
 
 ## 当前进度
 
 项目随 DDD 实战课程逐步迭代：
 
 - [x] 多模块 Maven 骨架 + 4 BC 独立 schema
-- [x] 订单 BC：聚合根、值对象、状态机
-- [x] 库存 BC：乐观锁预占 / 释放
-- [x] 领域事件 + Outbox
+- [x] 4 BC 四层包结构 + ArchUnit 依赖方向守护
+- [ ] 订单 BC：聚合根、值对象、状态机
+- [ ] 库存 BC：乐观锁预占 / 释放
+- [ ] 领域事件 + Outbox
 - [ ] Seata AT 跨 BC 事务
 - [ ] Saga 编排
 - [ ] Spring Cloud Gateway 灰度

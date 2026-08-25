@@ -10,10 +10,18 @@
 3. **mvn compile 必过**：本讲 commit 前必须 `mvn clean compile -q` 0 错误；不通过禁止 commit。
 4. **API 改名/废弃**：先在本文件加 `⚠ deprecated at L-N`，下讲方可真正删除（给读者一讲缓冲）。
 5. **Flyway 版本对齐**：每张表的 schema 版本号必须与本文件 `### Schema` 段一致。
+6. **每讲打 lesson tag**：本讲最后一个 commit 打 `lesson-NN` 注解标签并 push，作为读者对照文章的不可变快照；main 分支保持可直接编写提交，不开讲次特性分支。
 
 ## 4 BC 公共 API
 
-### mall-order (核心域) — 启动类 L4 / 领域代码 L6
+### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6
+
+#### 四层包结构 — L5
+- `interfaces/` `application/` `domain/` `infrastructure/` 四个包以 `package-info.java` 固化职责与依赖方向（编译产物，非空目录占位）
+- `test/ArchitectureTest`（ArchUnit 1.4.1）— L5
+  - 领域层不依赖外层三个包；领域层不依赖 `org.springframework..` / `com.baomidou..` / `org.apache.rocketmq..`（注解也算依赖）
+  - 应用层不依赖接口层/基础设施层；基础设施层不依赖接口层/应用层
+  - 骨架阶段 `allowEmptyShould(true)` 空转，L6 领域类落地后自动真查
 
 #### domain/
 - `Order` (聚合根) — L6
@@ -42,21 +50,21 @@
 ### Schema (Flyway)
 - `V1__init_order_schema.sql` — t_order / t_order_item / t_order_status_history / t_outbox_event / undo_log — L4
 
-### mall-inventory (支撑域) — 启动类 L4 / 领域代码待 L12
+### mall-inventory (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L12
 
 (待 L12 引入 Inventory 聚合根、PreDeductSkuService)
 
 ### Schema
 - (空，待 L12)
 
-### mall-payment (支撑域) — 启动类 L4 / 领域代码待 L17
+### mall-payment (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L17
 
 (待 L17 引入 Payment 聚合根、PaymentCallbackService)
 
 ### Schema
 - (空，待 L17)
 
-### mall-product (通用域) — 启动类 L4 / 领域代码待 L18
+### mall-product (通用域) — 启动类 L4 / 四层包 L5 / 领域代码待 L18
 
 (待 L18 引入 Product 聚合根、ProductQueryService)
 
@@ -75,6 +83,7 @@
 | L1 | 战略设计课，**无代码符号变更**。锁定领域事件词汇表（11 个，过去时，L8/L9/L14 落代码时以此为准，不得另起名）：OrderCreated、InventoryPreDeducted、PaymentRequested、OrderPaid、OrderCancelled、InventoryReleased、OrderShipped、OrderReceived、RefundRequested、RefundCompleted、InventoryRolledBack；锁定 4 BC 名 `mall-order`/`mall-inventory`/`mall-payment`/`mall-product`（L4 落 Maven 模块）；OrderPaid 归属 mall-order（由支付回调产生，跨 BC 紫色箭头） | — | —。文章 5830 字 status=done（2026-08-10） |
 | L3 | 战略设计课，**无代码符号变更**。新增 `docs/adr/ADR-01-bounded-context-and-context-map.md`（Accepted），锁定 4 BC 职责卡、4×4 上下文映射矩阵（订单-库存/支付=C/S；订单-商品=Conformist+Separate Ways；库存/支付/商品两两=Separate Ways；库存/支付→订单=OHS/PL 领域事件）；商品 ID 不采用 Shared Kernel，用值对象复制；订单-库存暂为 C/S，L23 重审是否加 ACL（触发条件写入 ADR）。11 事件名与 L1 一致，未新增。`mvn clean compile -q` exit 0（4.1s） | — | —。文章 7761 字 status=done（2026-08-16） |
 | L4 | `ProductApplication`/`InventoryApplication`/`PaymentApplication` 启动类（@EnableDiscoveryClient；**不声明 @MapperScan**——扫描路径不存在不报错但属预支未来，各模块在首个 Mapper 落地讲（6/12/17/18）再声明）、3 份 application.yml（discovery 开 / config 关 / flyway 关）、3 个模块 spring-boot-maven-plugin；落盘 commit 44e0da8 → a6d628a → 1f9be43 →（移除 @MapperScan 见本讲修订 commit）。4 应用注册 Nacos、mall-order Flyway V1 迁移实测通过 | — | — |
+| L5 | 4 BC 四层包 `interfaces`/`application`/`domain`/`infrastructure`（16 个 `package-info.java`）；mall-order `ArchitectureTest`（ArchUnit 1.4.1 四条依赖方向禁令）；父 pom `archunit.version` + dependencyManagement；README 加「按讲阅读代码：lesson tag 快照」并修正进度清单；落盘 commit 9ad925c → 8f363ed →（docs commit）。`mvn test` 5 用例全绿；4 应用启动注册回归通过。边界样例：拼错包名的规则 `failed to check any classes`（ArchUnit 1.x 默认空规则即失败）；领域层挂 `@Component` 被规则二当场抓出 | — | — |
 | L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderMapper` | — | — |
 | L11 | `OrderApplicationService` / `OrderController` | `Order` 可能加公开方法 | — |
 | ... | ... | ... | ... |

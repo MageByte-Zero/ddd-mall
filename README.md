@@ -34,6 +34,7 @@ ddd-mall/
 ├── mall-payment/      # 支付 BC（支撑域，port 8083）
 ├── mall-order/        # 订单 BC（核心域，port 8084）
 ├── docker-compose/    # Nacos / Sentinel / Seata / RocketMQ / Zipkin 一键起
+├── scripts/           # 中间件 + 四模块的启停脚本（见下方「脚本」）
 ├── fixtures/          # 脱敏需求、跨 BC 契约、失败样例
 ├── docs/adr/          # 架构决策记录
 └── evals/             # 压测、契约测试脚本
@@ -45,39 +46,68 @@ ddd-mall/
 
 ### 前置依赖
 
-- JDK 21（`/usr/libexec/java_home -v 21` 可用）
-- Docker runtime（Docker Desktop 或 Colima）
-- Maven 3.8+（或直接用仓库自带的 `./mvnw`，会自动下载）
+- JDK 21（`/usr/libexec/java_home -v 21` 可用；脚本会自动探测并校验主版本）
+- Docker runtime（Docker Desktop 或 Colima，`docker info` 可连接）
+- Maven 3.8+（或直接用仓库自带的 `./mvnw`，会自动下载 Maven 3.9.9）
 
-### 1. 克隆仓库
+### 一条命令从零跑起来
 
 ```bash
 git clone https://github.com/MageByte-Zero/ddd-mall.git
 cd ddd-mall
+./scripts/run.sh up          # 中间件 up → mvn package → 启动四个业务模块
 ```
 
-### 2. 启动中间件
+约 2–3 分钟后（含首次镜像拉取和 Maven 下载），验证：
 
 ```bash
-cd docker-compose
-docker compose up -d
-docker compose ps   # 8 个容器 Up（Seata 在 AT 讲次前可暂不启用）
+./scripts/run.sh status      # 容器状态 + 四模块 PID/端口 + Nacos 注册数
 ```
 
-### 3. 编译
+看到 `已注册服务数: 4 / 4` 即全部就绪。打开 Nacos 控制台 http://localhost:8848/nacos （nacos/nacos）可看到四个 mall-* 实例。
+
+### 日常使用
 
 ```bash
-# 必须用 JDK 21；./mvnw 会自动下载 Maven 3.9.9
-export JAVA_HOME=$(/usr/libexec/java_home -v 21)
-./mvnw clean install -DskipTests
+# 只启动/停止业务模块（中间件保持运行）
+./scripts/app.sh start all
+./scripts/app.sh stop all
+
+# 只启动核心域
+./scripts/app.sh start order
+
+# 查日志
+./scripts/app.sh logs order
+
+# 中间件管理
+./scripts/infra.sh up        # 启动并等待 MySQL/Nacos 就绪
+./scripts/infra.sh down      # 停止删除容器（保留数据卷）
+./scripts/infra.sh status
+
+# 环境自检（启动出问题先跑这个）
+./scripts/healthcheck.sh
+
+# 全停：业务模块 + 中间件
+./scripts/run.sh down
+# ⚠ 清空中间件数据（含 MySQL 全部 mall_* 库）：
+./scripts/run.sh clean
 ```
 
-### 4. 启动核心域
+启动后四模块端口：mall-product 8081 / mall-inventory 8082 / mall-payment 8083 / mall-order 8084。中间件端口与控制台见 `./scripts/infra.sh` 输出。
 
-```bash
-JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -pl mall-order spring-boot:run
-# 启动成功后到 Nacos 控制台确认注册：http://localhost:8848/nacos （nacos/nacos）
-```
+> 不想用脚本？中间件等价于 `cd docker-compose && docker compose up -d`；业务模块等价于 `./mvnw clean package -DskipTests` 后 `java -jar mall-<name>/target/mall-<name>-0.1.0-SNAPSHOT.jar`。脚本只是把这些命令串起来并加上 PID 管理、就绪探测和端口校验。
+
+## 脚本一览
+
+| 脚本 | 职责 |
+|---|---|
+| `scripts/run.sh` | 一键编排：中间件 + 四模块作为整体 up/down/status/clean |
+| `scripts/infra.sh` | 中间件容器 up/down/stop/status/logs/clean |
+| `scripts/app.sh` | 业务模块 build/start/stop/restart/status/logs |
+| `scripts/healthcheck.sh` | JDK/Docker/端口/容器/Nacos/schema 逐项自检 |
+| `scripts/common.sh` | 公共函数（被其他脚本 source，不直接执行） |
+
+业务模块以 `nohup java -jar` 后台运行，PID 写入 `logs/mall-<m>.pid`，标准输出写入 `logs/mall-<m>.out`（`logs/` 已在 `.gitignore`）。
 
 ## 按讲阅读代码：lesson tag 快照
 

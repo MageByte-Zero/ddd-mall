@@ -12,6 +12,39 @@
 5. **Flyway 版本对齐**：每张表的 schema 版本号必须与本文件 `### Schema` 段一致。
 6. **每讲打 lesson tag**：本讲最后一个 commit 打 `lesson-NN` 注解标签并 push，作为读者对照文章的不可变快照；main 分支保持可直接编写提交，不开讲次特性分支。
 
+## 命名约定（全 4 BC 统一，L6 锁定）
+
+领域层核心概念**故意不加 `Entity`/`VO`/`Aggregate` 等模式后缀**——类名直接使用统一语言中的名词（Evans/Vernon 主流做法），避免污染业务语言。识别靠下面三个信号，不靠后缀：
+
+**信号 1（最强）：包。** `domain.*` 里的是领域对象；`infrastructure.persistence.*DO` 是持久化对象；`interfaces.*` 是协议适配。
+
+**信号 2：Java 类型关键字。**
+- `record Xxx(...)` → 值对象（不可变、按值相等，编译器级标签，比任何 `XxxVO` 后缀都醒目）
+- `enum Xxx`     → 通常是值对象（状态、类型等枚举）
+- `class Xxx`（持有身份、有生命周期）→ 实体或聚合根
+
+**信号 3：仓储归属 + 身份。** 拥有独立 `XxxRepository`、持有全局身份（订单号/业务 id）的那个实体 = 聚合根；没有自己的 Repository、只能经聚合根访问的 = 聚合内实体。
+
+各层后缀约定：
+
+| 层 | 类型 | 命名 | 后缀？ |
+|---|---|---|---|
+| domain | 聚合根/实体 | `Order`、`OrderItem` | 不加 |
+| domain | 值对象 | `Money`、`Address`（用 record） | 不加 |
+| domain | 仓储接口 | `OrderRepository` | **加 Repository** |
+| domain | 领域服务 | `OrderDomainService` | **加 DomainService**（与应用服务区分） |
+| domain | 领域事件 | `OrderPaidEvent`（L8 起，record） | **加 Event** |
+| domain | 工厂 | `OrderFactory`（真正需要时） | 加 Factory |
+| domain | 异常 | `OrderDomainException` | 加 DomainException |
+| infrastructure | 持久化对象 | `OrderDO` | **加 DO** |
+| infrastructure | MyBatis 映射器 | `OrderMapper` | **加 Mapper** |
+| infrastructure | 仓储实现 | `OrderRepositoryImpl` | **加 RepositoryImpl** |
+| application | 应用服务 | `OrderApplicationService`（L11） | **加 ApplicationService** |
+| interfaces | Controller | `OrderController`（L11） | **加 Controller** |
+| interfaces | 出入参 | `OrderRequest`/`OrderResponse` 或 `OrderDTO`（L11） | 按职责加 |
+
+不引入 jMolecules 等构造型注解库，也不自定义 `@AggregateRoot`/`@ValueObject` 标记注解——保持领域层零依赖（含零注解依赖），识别交给上述三个信号 + ArchUnit 分层规则。
+
 ## 4 BC 公共 API
 
 ### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6

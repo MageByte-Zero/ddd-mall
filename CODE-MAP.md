@@ -39,9 +39,21 @@
 - `OrderStatus` (枚举) — L6
   - `boolean canTransitionTo(OrderStatus target)`
 - `Address` (值对象, record) — L6
+- `OrderRepository` (仓储接口, 领域层定义、基础设施层实现) — L6
+  - `Order save(Order)`, `Optional<Order> findById(Long)`, `Optional<Order> findByOrderNo(String)`
+- `OrderDomainException` (领域异常) — L6
 
 #### infrastructure/persistence/
+- `OrderDO` / `OrderItemDO`（@TableName t_order / t_order_item；@Version / @TableLogic）— L6
 - `OrderMapper extends BaseMapper<OrderDO>` — L6
+- `OrderItemMapper extends BaseMapper<OrderItemDO>` — L6（订单项无独立仓储，随聚合根存取）
+- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6
+
+#### infrastructure/config/
+- `MybatisPlusConfig`（OptimisticLockerInnerInterceptor，让 @Version 真生效）— L6
+
+#### 启动类 — L6
+- `OrderApplication` 补 `@MapperScan("com.magebyte.ddd.mall.order.infrastructure.persistence")`（第 4 讲预留的首个 Mapper 落地点）
 
 #### application/（空，待 L11 引入 OrderApplicationService）
 
@@ -84,7 +96,7 @@
 | L3 | 战略设计课，**无代码符号变更**。新增 `docs/adr/ADR-01-bounded-context-and-context-map.md`（Accepted），锁定 4 BC 职责卡、4×4 上下文映射矩阵（订单-库存/支付=C/S；订单-商品=Conformist+Separate Ways；库存/支付/商品两两=Separate Ways；库存/支付→订单=OHS/PL 领域事件）；商品 ID 不采用 Shared Kernel，用值对象复制；订单-库存暂为 C/S，L23 重审是否加 ACL（触发条件写入 ADR）。11 事件名与 L1 一致，未新增。`mvn clean compile -q` exit 0（4.1s） | — | —。文章 7761 字 status=done（2026-08-16） |
 | L4 | `ProductApplication`/`InventoryApplication`/`PaymentApplication` 启动类（@EnableDiscoveryClient；**不声明 @MapperScan**——扫描路径不存在不报错但属预支未来，各模块在首个 Mapper 落地讲（6/12/17/18）再声明）、3 份 application.yml（discovery 开 / config 关 / flyway 关）、3 个模块 spring-boot-maven-plugin；落盘 commit 44e0da8 → a6d628a → 1f9be43 →（移除 @MapperScan 见本讲修订 commit）。4 应用注册 Nacos、mall-order Flyway V1 迁移实测通过 | — | — |
 | L5 | 4 BC 四层包 `interfaces`/`application`/`domain`/`infrastructure`（16 个 `package-info.java`）；mall-order `ArchitectureTest`（ArchUnit 1.4.1 四条依赖方向禁令）；父 pom `archunit.version` + dependencyManagement；README 加「按讲阅读代码：lesson tag 快照」并修正进度清单；落盘 commit 9ad925c → 8f363ed →（docs commit）。`mvn test` 5 用例全绿；4 应用启动注册回归通过。边界样例：拼错包名的规则 `failed to check any classes`（ArchUnit 1.x 默认空规则即失败）；领域层挂 `@Component` 被规则二当场抓出 | — | — |
-| L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderMapper` | — | — |
+| L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderRepository` / `OrderDomainException`；`OrderDO` / `OrderItemDO` / `OrderMapper` / `OrderItemMapper` / `OrderRepositoryImpl` / `MybatisPlusConfig`；`@MapperScan` 落地 | — | — |
 | L11 | `OrderApplicationService` / `OrderController` | `Order` 可能加公开方法 | — |
 | ... | ... | ... | ... |
 

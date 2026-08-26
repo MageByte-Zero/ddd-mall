@@ -94,6 +94,7 @@ git checkout main        # 回到最新状态
 |---|---|---|
 | `lesson-04` | 第 4 讲 | 4 BC 骨架：启动类 + 配置 + mall-order Flyway V1，4 应用注册 Nacos |
 | `lesson-05` | 第 5 讲 | 4 BC 四层包结构 + ArchUnit 依赖方向守护 |
+| `lesson-06` | 第 6 讲 | 订单聚合根：实体+值对象+不变量，仓储依赖倒置落地 |
 
 ## 当前进度
 
@@ -101,7 +102,7 @@ git checkout main        # 回到最新状态
 
 - [x] 多模块 Maven 骨架 + 4 BC 独立 schema
 - [x] 4 BC 四层包结构 + ArchUnit 依赖方向守护
-- [ ] 订单 BC：聚合根、值对象、状态机
+- [x] 订单 BC：聚合根、值对象、不变量（第 7 讲补完整状态机）
 - [ ] 库存 BC：乐观锁预占 / 释放
 - [ ] 领域事件 + Outbox
 - [ ] Seata AT 跨 BC 事务

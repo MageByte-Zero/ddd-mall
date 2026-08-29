@@ -20,8 +20,8 @@ import java.util.Set;
  * </pre>
  *
  * <p>终态：RECEIVED、CANCELLED、REFUNDED——没有任何出边。
- * 完整状态机行为（状态历史落库、非法迁移的对外响应）在第 7 讲补齐；
- * 本讲只立迁移规则本身，供聚合根的 markPaid / cancel 使用。
+ * 迁移方法（markPaid / markShipped / confirmReceived / cancel）与状态历史链
+ * 住在 {@link Order} 聚合根上（第 7 讲）；退款两条边的迁移方法第 15 讲补齐。
  */
 public enum OrderStatus {
 

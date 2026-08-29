@@ -7,6 +7,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,6 +41,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/probe/illegal-transition"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value(422))
-                .andExpect(jsonPath("$.message").value("非法状态迁移: PAID -> CANCELLED"));
+                .andExpect(jsonPath("$.message").value("非法状态迁移: PAID -> CANCELLED"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
     }
 }

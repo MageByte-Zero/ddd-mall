@@ -8,6 +8,7 @@ import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderStatus;
+import com.magebyte.ddd.mall.order.domain.StatusChange;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
@@ -30,10 +31,13 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
+    private final OrderStatusHistoryMapper statusHistoryMapper;
 
-    public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper) {
+    public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
+                               OrderStatusHistoryMapper statusHistoryMapper) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
+        this.statusHistoryMapper = statusHistoryMapper;
     }
 
     @Override
@@ -63,6 +67,9 @@ public class OrderRepositoryImpl implements OrderRepository {
         for (OrderItem item : order.getItems()) {
             orderItemMapper.insert(toItemDO(orderDO.getId(), item));
         }
+        for (StatusChange change : order.statusHistory()) {
+            statusHistoryMapper.insert(toHistoryDO(orderDO.getId(), change));
+        }
         return findById(orderDO.getId()).orElseThrow();
     }
 
@@ -81,6 +88,14 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .eq(OrderItemDO::getOrderId, order.id()));
         for (OrderItem item : order.getItems()) {
             orderItemMapper.insert(toItemDO(order.id(), item));
+        }
+        // 状态历史只增不改：库里已有几节，就只追加新增的尾段
+        List<StatusChange> history = order.statusHistory();
+        long persisted = statusHistoryMapper.selectCount(
+                Wrappers.<OrderStatusHistoryDO>lambdaQuery()
+                        .eq(OrderStatusHistoryDO::getOrderId, order.id()));
+        for (int i = (int) persisted; i < history.size(); i++) {
+            statusHistoryMapper.insert(toHistoryDO(order.id(), history.get(i)));
         }
         return findById(order.id()).orElseThrow();
     }
@@ -102,12 +117,27 @@ public class OrderRepositoryImpl implements OrderRepository {
                     itemDO.getQuantity(),
                     Money.of(itemDO.getUnitPrice())));
         }
+        List<OrderStatusHistoryDO> historyDOs = statusHistoryMapper.selectList(
+                Wrappers.<OrderStatusHistoryDO>lambdaQuery()
+                        .eq(OrderStatusHistoryDO::getOrderId, orderDO.getId())
+                        .orderByAsc(OrderStatusHistoryDO::getId));
+        List<StatusChange> history = new ArrayList<>(historyDOs.size());
+        for (OrderStatusHistoryDO historyDO : historyDOs) {
+            history.add(new StatusChange(
+                    historyDO.getFromStatus() == null
+                            ? null : OrderStatus.valueOf(historyDO.getFromStatus()),
+                    OrderStatus.valueOf(historyDO.getToStatus()),
+                    historyDO.getReason(),
+                    historyDO.getOperatedBy(),
+                    historyDO.getCreatedAt()));
+        }
         return Optional.of(Order.reconstitute(
                 orderDO.getId(),
                 orderDO.getOrderNo(),
                 orderDO.getUserId(),
                 OrderStatus.valueOf(orderDO.getStatus()),
                 items,
+                history,
                 Money.of(orderDO.getTotalAmount()),
                 orderDO.getPaidAmount() == null ? null : Money.of(orderDO.getPaidAmount()),
                 new Address(orderDO.getReceiverName(),
@@ -143,5 +173,16 @@ public class OrderRepositoryImpl implements OrderRepository {
         itemDO.setUnitPrice(item.unitPrice().amount());
         itemDO.setSubtotal(item.subtotal().amount());
         return itemDO;
+    }
+
+    private OrderStatusHistoryDO toHistoryDO(Long orderId, StatusChange change) {
+        OrderStatusHistoryDO historyDO = new OrderStatusHistoryDO();
+        historyDO.setOrderId(orderId);
+        historyDO.setFromStatus(change.from() == null ? null : change.from().name());
+        historyDO.setToStatus(change.to().name());
+        historyDO.setReason(change.reason());
+        historyDO.setOperatedBy(change.operatedBy());
+        historyDO.setCreatedAt(change.occurredAt());
+        return historyDO;
     }
 }

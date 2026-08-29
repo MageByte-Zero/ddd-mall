@@ -30,7 +30,7 @@
 | 层 | 类型 | 命名 | 后缀？ |
 |---|---|---|---|
 | domain | 聚合根/实体 | `Order`、`OrderItem` | 不加 |
-| domain | 值对象 | `Money`、`Address`（用 record） | 不加 |
+| domain | 值对象 | `Money`、`Address`、`StatusChange`（用 record） | 不加 |
 | domain | 仓储接口 | `OrderRepository` | **加 Repository** |
 | domain | 领域服务 | `OrderDomainService` | **加 DomainService**（与应用服务区分） |
 | domain | 领域事件 | `OrderPaidEvent`（L8 起，record） | **加 Event** |
@@ -47,7 +47,7 @@
 
 ## 4 BC 公共 API
 
-### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6
+### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6 / 状态机 L7
 
 #### 四层包结构 — L5
 - `interfaces/` `application/` `domain/` `infrastructure/` 四个包以 `package-info.java` 固化职责与依赖方向（编译产物，非空目录占位）
@@ -57,30 +57,38 @@
   - 骨架阶段 `allowEmptyShould(true)` 空转，L6 领域类落地后自动真查
 
 #### domain/
-- `Order` (聚合根) — L6
+- `Order` (聚合根) — L6，L7 扩状态机
   - `static Order create(Long userId, Address address)`
   - `void addItem(OrderItem item)`
-  - `void markPaid(Money paidAmount, LocalDateTime when)`
-  - `void cancel(LocalDateTime when)`
+  - `void markPaid(Money paidAmount, String operatedBy, LocalDateTime when)` — L7 签名加 operatedBy（L6 为 `markPaid(Money, LocalDateTime)`）
+  - `void markShipped(String operatedBy, LocalDateTime when)` — L7：PAID → SHIPPED
+  - `void confirmReceived(String operatedBy, LocalDateTime when)` — L7：SHIPPED → RECEIVED
+  - `void cancel(String reason, String operatedBy, LocalDateTime when)` — L7 签名加 reason/operatedBy（L6 为 `cancel(LocalDateTime)`）；仅 PENDING_PAY → CANCELLED
   - `List<OrderItem> getItems()` (unmodifiable)
+  - `List<StatusChange> statusHistory()` (unmodifiable) — L7
+  - `static Order reconstitute(...)` — L7 签名加 `List<StatusChange> statusHistory`（插在 items 之后），重组即校验历史链（非空/首节 from 为空/首尾相接/每步合法/末节 to==当前状态）
+  - 退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位，迁移方法待 L15
 - `OrderItem` (实体) — L6
   - `static OrderItem create(Long productId, Long skuId, String productName, int quantity, Money unitPrice)`
   - `Money subtotal()`
 - `Money` (值对象, record) — L6
   - `static Money of(BigDecimal)`, `static Money of(String)`, `static Money zero()`
   - `Money plus(Money)`, `Money multiply(int)`, `boolean isGreaterThan(Money)`
-- `OrderStatus` (枚举) — L6
-  - `boolean canTransitionTo(OrderStatus target)`
+- `OrderStatus` (枚举) — L6 立迁移表，L7 注释更新
+  - `boolean canTransitionTo(OrderStatus target)`（7 状态 8 合法迁移；终态 RECEIVED/CANCELLED/REFUNDED 无出边）
+- `StatusChange` (值对象, record) — L7：`(OrderStatus from, OrderStatus to, String reason, String operatedBy, LocalDateTime occurredAt)`；from 仅创建记录为 null
 - `Address` (值对象, record) — L6
 - `OrderRepository` (仓储接口, 领域层定义、基础设施层实现) — L6
   - `Order save(Order)`, `Optional<Order> findById(Long)`, `Optional<Order> findByOrderNo(String)`
-- `OrderDomainException` (领域异常) — L6
+- `OrderDomainException` (领域异常) — L6；L7 起由接口层翻译为 HTTP 422
 
 #### infrastructure/persistence/
 - `OrderDO` / `OrderItemDO`（@TableName t_order / t_order_item；@Version / @TableLogic）— L6
 - `OrderMapper extends BaseMapper<OrderDO>` — L6
 - `OrderItemMapper extends BaseMapper<OrderItemDO>` — L6（订单项无独立仓储，随聚合根存取）
-- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6
+- `OrderStatusHistoryDO`（@TableName t_order_status_history；无 @Version/@TableLogic，只增不改）— L7
+- `OrderStatusHistoryMapper extends BaseMapper<OrderStatusHistoryDO>` — L7（历史无独立仓储，随聚合根存取）
+- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6，L7 扩历史：insert 全量写历史；update 按库中已存节数 delta 追加尾段；读出按 id 升序重组历史链
 
 #### infrastructure/config/
 - `MybatisPlusConfig`（OptimisticLockerInnerInterceptor，让 @Version 真生效）— L6
@@ -90,7 +98,11 @@
 
 #### application/（空，待 L11 引入 OrderApplicationService）
 
-#### interfaces/（空，待 L11 引入 OrderController）
+#### interfaces/rest/
+- `GlobalExceptionHandler`（@RestControllerAdvice）— L7：`OrderDomainException` → HTTP 422（Unprocessable Entity），控制器 L11 进场后自动生效
+
+#### interfaces/
+- （OrderController 待 L11）
 
 ### Schema (Flyway)
 - `V1__init_order_schema.sql` — t_order / t_order_item / t_order_status_history / t_outbox_event / undo_log — L4
@@ -130,6 +142,7 @@
 | L4 | `ProductApplication`/`InventoryApplication`/`PaymentApplication` 启动类（@EnableDiscoveryClient；**不声明 @MapperScan**——扫描路径不存在不报错但属预支未来，各模块在首个 Mapper 落地讲（6/12/17/18）再声明）、3 份 application.yml（discovery 开 / config 关 / flyway 关）、3 个模块 spring-boot-maven-plugin；落盘 commit 44e0da8 → a6d628a → 1f9be43 →（移除 @MapperScan 见本讲修订 commit）。4 应用注册 Nacos、mall-order Flyway V1 迁移实测通过 | — | — |
 | L5 | 4 BC 四层包 `interfaces`/`application`/`domain`/`infrastructure`（16 个 `package-info.java`）；mall-order `ArchitectureTest`（ArchUnit 1.4.1 四条依赖方向禁令）；父 pom `archunit.version` + dependencyManagement；README 加「按讲阅读代码：lesson tag 快照」并修正进度清单；落盘 commit 9ad925c → 8f363ed →（docs commit）。`mvn test` 5 用例全绿；4 应用启动注册回归通过。边界样例：拼错包名的规则 `failed to check any classes`（ArchUnit 1.x 默认空规则即失败）；领域层挂 `@Component` 被规则二当场抓出 | — | — |
 | L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderRepository` / `OrderDomainException`；`OrderDO` / `OrderItemDO` / `OrderMapper` / `OrderItemMapper` / `OrderRepositoryImpl` / `MybatisPlusConfig`；`@MapperScan` 落地 | — | — |
+| L7 | `StatusChange`（record 值对象）；`OrderStatusHistoryDO` / `OrderStatusHistoryMapper`；`interfaces/rest/GlobalExceptionHandler`（领域异常→422） | `Order`：新增 `markShipped` / `confirmReceived` / `statusHistory()`，`markPaid`/`cancel`/`reconstitute` 签名扩参（操作人/原因/历史链），所有迁移经私有 `recordChange` 唯一入口落历史；`OrderRepositoryImpl`：历史随聚合同事务写入（insert 全量、update delta 追加）、读出按 id 升序重组；`OrderStatus` 注释更新；`interfaces/package-info.java` 依赖方向说明补充异常翻译 | — |
 | L11 | `OrderApplicationService` / `OrderController` | `Order` 可能加公开方法 | — |
 | ... | ... | ... | ... |
 

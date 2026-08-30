@@ -47,12 +47,38 @@ wait_for_middleware() {
   fi
 }
 
+init_rocketmq_topics() {
+  info "等待 RocketMQ namesrv 就绪..."
+  if ! wait_for_port 127.0.0.1 9876 90; then
+    warn "namesrv 90s 内未监听 9876，跳过 topic 初始化（应用首次发消息时 broker 会自动建 topic，但首条消息延迟较高）"
+    return
+  fi
+  # broker 启动后需要十几秒才向 namesrv 注册，mqadmin 建 topic 前要等它注册成功
+  local topics=("order-events")
+  for t in "${topics[@]}"; do
+    local ok_flag=0
+    for _ in $(seq 1 30); do
+      if docker exec ddd-rocketmq-broker sh mqadmin updateTopic \
+          -n rocketmq-namesrv:9876 -c DefaultCluster -t "$t" >/dev/null 2>&1; then
+        ok_flag=1; break
+      fi
+      sleep 2
+    done
+    if [ "$ok_flag" = 1 ]; then
+      ok "RocketMQ topic 已就绪: $t（生产实践：topic 预创建，不依赖 broker 自动创建）"
+    else
+      warn "topic $t 预创建失败（broker 未注册？）；broker 开了 autoCreateTopicEnable，应用首条消息仍会成功，只是首次延迟较高"
+    fi
+  done
+}
+
 case "$cmd" in
   up)
     ensure_docker
     info "拉取镜像并启动中间件（首次较慢）..."
     compose up -d
     wait_for_middleware
+    init_rocketmq_topics
     "$0" status
     ;;
   down)

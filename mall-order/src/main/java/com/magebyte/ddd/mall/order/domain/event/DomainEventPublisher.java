@@ -1,0 +1,24 @@
+package com.magebyte.ddd.mall.order.domain.event;
+
+import java.util.List;
+
+/**
+ * 领域事件发布端口（Domain Event Publisher Port）。
+ *
+ * <p>依赖倒置的落点：领域层只定义"事件要发出去"这个意图，
+ * 不认识 RocketMQ、Kafka、Spring 任何技术；适配器住基础设施层
+ * （{@code infrastructure.messaging.OrderEventPublisher}），
+ * 由 Spring 容器把实现注入给仓储。
+ *
+ * <p>一次发布一批事件：一次事务里聚合可能产生多个事实
+ * （本讲一个聚合一次保存只对应一个事件，批量签名为后续讲次预留），
+ * 发布方保证同一批事件的发送顺序与列表顺序一致。
+ */
+public interface DomainEventPublisher {
+
+    /**
+     * 发布一批领域事件。实现方必须保证事件只在数据库事务提交后发送——
+     * 事务回滚时这批事件应当被丢弃，任何订阅方都不该收到（无幽灵事件）。
+     */
+    void publishAll(List<DomainEvent> events);
+}

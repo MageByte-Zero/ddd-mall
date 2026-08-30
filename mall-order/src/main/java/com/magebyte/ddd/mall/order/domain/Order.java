@@ -1,5 +1,12 @@
 package com.magebyte.ddd.mall.order.domain;
 
+import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
+import com.magebyte.ddd.mall.order.domain.event.OrderCancelledEvent;
+import com.magebyte.ddd.mall.order.domain.event.OrderCreatedEvent;
+import com.magebyte.ddd.mall.order.domain.event.OrderPaidEvent;
+import com.magebyte.ddd.mall.order.domain.event.OrderReceivedEvent;
+import com.magebyte.ddd.mall.order.domain.event.OrderShippedEvent;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -23,7 +30,11 @@ import java.util.concurrent.ThreadLocalRandom;
  *       且每次迁移都向状态历史链追加一节 {@link StatusChange}——历史只增不改，
  *       节与节首尾相接，末节的 to 永远等于当前状态；</li>
  *   <li>实付金额必须等于应付金额——需求里没有部分支付，领域层不留口子；</li>
- *   <li>进入 PAID / CANCELLED 后订单项冻结，不允许再增改。</li>
+ *   <li>进入 PAID / CANCELLED 后订单项冻结，不允许再增改；</li>
+ *   <li>事件可达：订单创建和每次合法状态迁移都抛出对应的领域事件
+ *       （OrderCreated / OrderPaid / OrderShipped / OrderReceived /
+ *       OrderCancelled），事件先收集在聚合内部，仓储保存后由发布端口发出；
+ *       重组历史不产生事件——事件只代表"新发生的事实"。</li>
  * </ul>
  */
 public class Order {
@@ -37,6 +48,11 @@ public class Order {
     private OrderStatus status;
     private final List<OrderItem> items = new ArrayList<>();
     private final List<StatusChange> statusHistory = new ArrayList<>();
+    /**
+     * 本聚合自上次保存以来产生的领域事件。只增不直接暴露：
+     * 外部通过 {@link #pullEvents()} 取走快照并清空，发布是基础设施层的事。
+     */
+    private final List<DomainEvent> events = new ArrayList<>();
     private Money totalAmount;
     private Money paidAmount;
     private Address address;
@@ -65,12 +81,16 @@ public class Order {
         // 历史链第一节：从"无状态"进入待支付，from 留空
         order.statusHistory.add(new StatusChange(null, OrderStatus.PENDING_PAY,
                 "用户下单", "user:" + userId, order.createdAt));
+        // 订单出生是第一个业务事实：抛出 OrderCreated 事件
+        order.events.add(OrderCreatedEvent.raise(order.orderNo, userId, order.createdAt));
         return order;
     }
 
     /**
      * 从持久化数据重组聚合，仓储实现专用入口。
      * 重组即校验：落库数据若已破坏金额守恒，宁可抛出也不带回病态对象。
+     * 注意：重组是"还原历史"而不是"新发生事实"，不抛出任何领域事件——
+     * 事件在当初状态变更时已经发过，读回来再发一遍会造成重复通知。
      */
     public static Order reconstitute(Long id, String orderNo, Long userId, OrderStatus status,
                                      List<OrderItem> items, List<StatusChange> statusHistory,
@@ -161,6 +181,7 @@ public class Order {
         Objects.requireNonNull(paidAmount, "实付金额不能为空");
         Objects.requireNonNull(operatedBy, "支付操作人不能为空");
         Objects.requireNonNull(when, "支付时间不能为空");
+        // 所有校验先于任何状态修改：非法迁移在实付金额落字段之前就被拒绝
         assertTransition(OrderStatus.PAID);
         if (items.isEmpty()) {
             throw new OrderDomainException("空订单不能支付：至少需要一个订单项");
@@ -169,8 +190,9 @@ public class Order {
             throw new OrderDomainException("金额守恒：实付 " + paidAmount
                     + " 与应付 " + totalAmount + " 不一致");
         }
-        recordChange(OrderStatus.PAID, "支付回调成功", operatedBy, when);
+        // 先落实付金额再迁移：OrderPaid 事件载荷从聚合状态取实付金额
         this.paidAmount = paidAmount;
+        recordChange(OrderStatus.PAID, "支付回调成功", operatedBy, when);
     }
 
     /**
@@ -269,8 +291,9 @@ public class Order {
     }
 
     /**
-     * 所有状态迁移的唯一入口：先过合法迁移表，再追加历史链，最后换状态。
-     * 历史只增不改——状态机每走一步都留下一节可追溯的记录。
+     * 所有状态迁移的唯一入口：先过合法迁移表，再追加历史链，然后换状态，
+     * 最后抛出对应的领域事件。历史只增不改——状态机每走一步都留下一节
+     * 可追溯的记录；事件只在迁移合法后才产生，非法迁移一个事件都不会抛。
      */
     private void recordChange(OrderStatus target, String reason, String operatedBy,
                               LocalDateTime when) {
@@ -278,6 +301,36 @@ public class Order {
         statusHistory.add(new StatusChange(status, target, reason, operatedBy, when));
         status = target;
         updatedAt = when;
+        raiseEventFor(target, reason, operatedBy, when);
+    }
+
+    /**
+     * 迁移目标状态 → 领域事件的映射。事件名全部取自第 1 讲锁定的词汇表，
+     * 退款两条边（REFUND_REQUESTED / REFUNDED）的迁移方法第 15 讲才补齐，
+     * 走到这里说明出现了尚未接入事件的状态，直接报错而不是静默不发。
+     */
+    private void raiseEventFor(OrderStatus target, String reason, String operatedBy,
+                               LocalDateTime when) {
+        switch (target) {
+            case PAID -> events.add(OrderPaidEvent.raise(orderNo, paidAmount, when));
+            case SHIPPED -> events.add(OrderShippedEvent.raise(orderNo, operatedBy, when));
+            case RECEIVED -> events.add(OrderReceivedEvent.raise(orderNo, operatedBy, when));
+            case CANCELLED ->
+                    events.add(OrderCancelledEvent.raise(orderNo, reason, operatedBy, when));
+            default -> throw new OrderDomainException(
+                    "状态 " + target + " 尚未接入领域事件发布");
+        }
+    }
+
+    /**
+     * 取走本聚合自上次保存以来产生的领域事件并清空（Vernon 主流做法）。
+     * 仓储保存聚合时调用：返回不可变快照，调用方遍历发布期间聚合再产生
+     * 事件也不影响本批；重组（reconstitute）出来的聚合事件列表永远为空。
+     */
+    public List<DomainEvent> pullEvents() {
+        List<DomainEvent> snapshot = List.copyOf(events);
+        events.clear();
+        return snapshot;
     }
 
     private static String generateOrderNo() {

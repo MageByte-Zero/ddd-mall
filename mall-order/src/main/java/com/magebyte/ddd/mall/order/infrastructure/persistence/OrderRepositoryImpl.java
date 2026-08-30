@@ -9,7 +9,11 @@ import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderStatus;
 import com.magebyte.ddd.mall.order.domain.StatusChange;
+import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
+import com.magebyte.ddd.mall.order.domain.event.DomainEventPublisher;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,20 +36,46 @@ public class OrderRepositoryImpl implements OrderRepository {
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
     private final OrderStatusHistoryMapper statusHistoryMapper;
+    private final DomainEventPublisher eventPublisher;
 
     public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
-                               OrderStatusHistoryMapper statusHistoryMapper) {
+                               OrderStatusHistoryMapper statusHistoryMapper,
+                               DomainEventPublisher eventPublisher) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusHistoryMapper = statusHistoryMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
     public Order save(Order order) {
-        if (order.id() == null) {
-            return insert(order);
+        // 先取走事件快照：事件从聚合内存中清空，后续即使持久化失败、事务回滚，
+        // afterCommit 也不会触发——事件随回滚一起丢弃，绝不发"幽灵事件"。
+        List<DomainEvent> pendingEvents = order.pullEvents();
+        Order saved = order.id() == null ? insert(order) : update(order);
+        registerPublicationAfterCommit(pendingEvents);
+        return saved;
+    }
+
+    /**
+     * 注册"事务提交后再发消息"。Spring 在事务真正提交成功后回调 afterCommit，
+     * 事务回滚时该回调不会执行；无活跃事务（教学/测试直连，语句已自动提交）
+     * 时直接发送，属于防御分支。
+     */
+    private void registerPublicationAfterCommit(List<DomainEvent> events) {
+        if (events.isEmpty()) {
+            return;
         }
-        return update(order);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    eventPublisher.publishAll(events);
+                }
+            });
+        } else {
+            eventPublisher.publishAll(events);
+        }
     }
 
     @Override

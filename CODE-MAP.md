@@ -52,7 +52,7 @@
 - `Result<T>`（`com.magebyte.ddd.mall.commons.response.Result`）— L7：统一响应体 code/message/data，`ok()` / `ok(T)` / `error(int, String)`；成功 code=200、失败沿用 HTTP 状态码语义（如 422）。业务无关、不依赖 Spring/Jackson，供各 BC 接口层复用
 - `package-info.java` — L7 固化"只放业务无关公共代码"职责
 
-### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6 / 状态机 L7
+### mall-order (核心域) — 启动类 L4 / 四层包 L5 / 领域代码 L6 / 状态机 L7 / 领域事件 L8
 
 #### 四层包结构 — L5
 - `interfaces/` `application/` `domain/` `infrastructure/` 四个包以 `package-info.java` 固化职责与依赖方向（编译产物，非空目录占位）
@@ -71,8 +71,20 @@
   - `void cancel(String reason, String operatedBy, LocalDateTime when)` — L7 签名加 reason/operatedBy（L6 为 `cancel(LocalDateTime)`）；仅 PENDING_PAY → CANCELLED
   - `List<OrderItem> getItems()` (unmodifiable)
   - `List<StatusChange> statusHistory()` (unmodifiable) — L7
+  - `List<DomainEvent> pullEvents()` — L8：取走聚合自上次保存以来产生的事件（不可变快照）并清空；reconstitute 重组的聚合事件列表永远为空（重组是还原历史，不产新事实）
   - `static Order reconstitute(...)` — L7 签名加 `List<StatusChange> statusHistory`（插在 items 之后），重组即校验历史链（非空/首节 from 为空/首尾相接/每步合法/末节 to==当前状态）
+  - 事件挂载点：`create()` 抛 OrderCreatedEvent；私有 `recordChange()` 迁移成功后经 `raiseEventFor(target, reason, operatedBy, when)` 抛对应事件（非法迁移在 assertTransition 即抛出，不产事件）；退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位、迁移方法待 L15，raiseEventFor 对未接入状态显式抛错
   - 退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位，迁移方法待 L15
+
+#### domain/event/（领域事件子包，L8 增量引入）
+- `DomainEvent`（纯 Java 接口，零框架依赖，ArchUnit 守）— L8：访问器 `eventId()`（UUID）/ `eventName()`（线上 wire name，= 消息 tag）/ `schemaVersion()`（当前全为 1）/ `orderNo()`（事件源业务身份；不用数据库自增 id——事件出生在入库前）/ `occurredOn()`
+- 5 个 record 事件（事件名锁定 L1 词汇表过去时；均为 `implements DomainEvent`，各带 `NAME` / `SCHEMA_VERSION=1` 常量与 `static raise(...)` 工厂；`eventName`/`schemaVersion` 是 record 组件，消息体自包含类型与版本）：
+  - `OrderCreatedEvent(eventId, eventName, schemaVersion, orderNo, userId, occurredOn)` — create() 抛出
+  - `OrderPaidEvent(..., orderNo, paidAmount: Money, occurredOn)` — markPaid 抛出
+  - `OrderShippedEvent(..., orderNo, operatedBy, occurredOn)` — markShipped 抛出
+  - `OrderReceivedEvent(..., orderNo, operatedBy, occurredOn)` — confirmReceived 抛出
+  - `OrderCancelledEvent(..., orderNo, reason, operatedBy, occurredOn)` — cancel 抛出
+- `DomainEventPublisher`（发布端口，纯 Java 接口）— L8：`void publishAll(List<DomainEvent>)`；实现住基础设施层（依赖倒置），契约要求"事务提交后才发送、回滚整批丢弃"
 - `OrderItem` (实体) — L6
   - `static OrderItem create(Long productId, Long skuId, String productName, int quantity, Money unitPrice)`
   - `Money subtotal()`
@@ -93,7 +105,13 @@
 - `OrderItemMapper extends BaseMapper<OrderItemDO>` — L6（订单项无独立仓储，随聚合根存取）
 - `OrderStatusHistoryDO`（@TableName t_order_status_history；无 @Version/@TableLogic，只增不改）— L7
 - `OrderStatusHistoryMapper extends BaseMapper<OrderStatusHistoryDO>` — L7（历史无独立仓储，随聚合根存取）
-- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6，L7 扩历史：insert 全量写历史；update 按库中已存节数 delta 追加尾段；读出按 id 升序重组历史链
+- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6，L7 扩历史：insert 全量写历史；update 按库中已存节数 delta 追加尾段；读出按 id 升序重组历史链。L8 扩事件：构造器注入 `DomainEventPublisher`；`save()` 开头 `pullEvents()` 快照事件，持久化后 `registerPublicationAfterCommit`——有活跃事务则注册 `TransactionSynchronization.afterCommit`（事务提交后才发 MQ，回滚则整批丢弃，杜绝幽灵事件），无活跃事务直接发（防御分支）
+
+#### infrastructure/messaging/（RocketMQ 适配，L8）
+- `OrderEventPublisher implements DomainEventPublisher`（@Component）— L8：RocketMQ 适配器；topic 常量 `order-events`，destination 语法 `topic:tag`（tag=事件名），`syncSend` 发 JSON（rocketmq-spring Jackson 转换器），消息 keys=eventId；只管"怎么发"
+- `OrderEventLoggerConsumer`（@Component + `@RocketMQMessageListener(topic="order-events", consumerGroup="mall-order-event-logger", selectorExpression="*")`，`RocketMQListener<MessageExt>`）— L8：最小消费者，打日志并存入 sink；真实业务订阅方在 L12/L17 进场后本类退役
+- `DomainEventSink`（@Component，synchronizedList 内存落点）— L8：教学/测试观察窗口，`offer` / `awaitByTag(tag, timeout)` / `all()` / `clear()`；测试断言"5 秒内到达"与载荷内容
+- `ReceivedOrderEvent`（record：tag/keys/jsonBody/receivedAt:Instant）— L8
 
 #### infrastructure/config/
 - `MybatisPlusConfig`（OptimisticLockerInnerInterceptor，让 @Version 真生效）— L6
@@ -111,6 +129,7 @@
 
 ### Schema (Flyway)
 - `V1__init_order_schema.sql` — t_order / t_order_item / t_order_status_history / t_outbox_event / undo_log — L4
+  - `t_outbox_event` 表 L4 已建，L8 **不读写**（本讲直接 afterCommit 发 MQ）；L9 Outbox 模式启用该表（事务内写事件、事务后轮询投递）
 
 ### mall-inventory (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L12
 
@@ -148,6 +167,7 @@
 | L5 | 4 BC 四层包 `interfaces`/`application`/`domain`/`infrastructure`（16 个 `package-info.java`）；mall-order `ArchitectureTest`（ArchUnit 1.4.1 四条依赖方向禁令）；父 pom `archunit.version` + dependencyManagement；README 加「按讲阅读代码：lesson tag 快照」并修正进度清单；落盘 commit 9ad925c → 8f363ed →（docs commit）。`mvn test` 5 用例全绿；4 应用启动注册回归通过。边界样例：拼错包名的规则 `failed to check any classes`（ArchUnit 1.x 默认空规则即失败）；领域层挂 `@Component` 被规则二当场抓出 | — | — |
 | L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderRepository` / `OrderDomainException`；`OrderDO` / `OrderItemDO` / `OrderMapper` / `OrderItemMapper` / `OrderRepositoryImpl` / `MybatisPlusConfig`；`@MapperScan` 落地 | — | — |
 | L7 | `StatusChange`（record 值对象）；`OrderStatusHistoryDO` / `OrderStatusHistoryMapper`；`interfaces/rest/GlobalExceptionHandler`（领域异常→422，返回统一响应 Result）；`Result<T>`（mall-commons，统一响应体） | `Order`：新增 `markShipped` / `confirmReceived` / `statusHistory()`，`markPaid`/`cancel`/`reconstitute` 签名扩参（操作人/原因/历史链），所有迁移经私有 `recordChange` 唯一入口落历史；`OrderRepositoryImpl`：历史随聚合同事务写入（insert 全量、update delta 追加）、读出按 id 升序重组；`OrderStatus` 注释更新；`interfaces/package-info.java` 依赖方向说明补充异常翻译 | — |
+| L8 | `domain/event/` 子包：`DomainEvent` 接口、5 个 record 事件（OrderCreated/OrderPaid/OrderShipped/OrderReceived/OrderCancelled，事件名同 L1 词汇表，schemaVersion=1，消息体自包含 eventName/schemaVersion）、`DomainEventPublisher` 端口；`infrastructure/messaging/`：`OrderEventPublisher`（RocketMQ 适配器，topic `order-events`，tag=事件名，keys=eventId，syncSend JSON）、`OrderEventLoggerConsumer`（最小消费者，consumerGroup `mall-order-event-logger`）、`DomainEventSink`/`ReceivedOrderEvent`（教学内存落点）；测试 `OrderDomainEventTest`（5 用例纯 JUnit）、`OrderEventRoundTripTest`（3 用例真实 RocketMQ 往返：创建/支付 5 秒内到达实测 71ms/53ms、回滚无幽灵事件）。环境适配：父 pom 显式锁 `rocketmq-client`/`rocketmq-acl` = 5.3.1（SCA BOM 压到 5.1.4 导致 `setNamespaceV2` NoSuchMethodError，rocketmq-spring 2.3.1 需 5.3.x）；`docker-compose/rocketmq/broker.properties` `brokerIP1` 由 `rocketmq-broker` 改 `127.0.0.1`（宿主机 JVM 经发布端口连 broker，docker 网络别名宿主不可解析）；`scripts/infra.sh` up 增加 topic `order-events` 预创建（mqadmin，重试等待 broker 注册） | `Order`：新增 `pullEvents()`，`create()` 抛 OrderCreatedEvent、`recordChange()` 成功后 `raiseEventFor` 抛迁移事件，`markPaid` 校验顺序调整（先校验后落 paidAmount），类 Javadoc 补"事件可达"不变量；`OrderRepositoryImpl`：注入发布端口，save 拉事件快照 + afterCommit 注册发送 | —。`mvn clean test` 54 用例全绿（L7 为 46） |
 | L11 | `OrderApplicationService` / `OrderController` | `Order` 可能加公开方法 | — |
 | ... | ... | ... | ... |
 

@@ -1,6 +1,8 @@
 package com.magebyte.ddd.mall.order.infrastructure.persistence;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.magebyte.ddd.mall.order.domain.Address;
 import com.magebyte.ddd.mall.order.domain.Money;
 import com.magebyte.ddd.mall.order.domain.Order;
@@ -10,10 +12,7 @@ import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderStatus;
 import com.magebyte.ddd.mall.order.domain.StatusChange;
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
-import com.magebyte.ddd.mall.order.domain.event.DomainEventPublisher;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,52 +28,75 @@ import java.util.Optional;
  * <p>翻译职责：聚合 ↔ 数据对象的双向转换都集中在这里。
  * 存入时拆成订单表 + 订单项表两张表；读出时重组回完整聚合并过一遍
  * {@link Order#reconstitute} 的不变量校验。
+ *
+ * <p>Outbox 模式（第 9 讲）：聚合取出的领域事件不再在事务提交后直接发 MQ，
+ * 而是和订单数据写在<b>同一个本地事务</b>里——业务表写一行，t_outbox_event
+ * 也写一行，要成一起成、要回滚一起回滚。事务提交后由
+ * {@code infrastructure.messaging.OutboxEventRelay} 轮询投递到 RocketMQ。
+ * 这样"数据库写"和"消息发送"两个系统的两次提交，被降维成一个数据库的
+ * 一次本地事务：进程在提交后、发送前崩溃也不丢事件（行已在库里，
+ * 中继器重启后继续捞）；事务回滚则 outbox 行随业务数据一起消失，
+ * 不会产生幽灵事件。
  */
 @Repository
 public class OrderRepositoryImpl implements OrderRepository {
 
+    /** outbox 行的聚合类型：本仓储只管订单聚合。 */
+    private static final String AGGREGATE_TYPE_ORDER = "Order";
+
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
     private final OrderStatusHistoryMapper statusHistoryMapper;
-    private final DomainEventPublisher eventPublisher;
+    private final OutboxEventMapper outboxEventMapper;
+    private final ObjectMapper objectMapper;
 
     public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
                                OrderStatusHistoryMapper statusHistoryMapper,
-                               DomainEventPublisher eventPublisher) {
+                               OutboxEventMapper outboxEventMapper,
+                               ObjectMapper objectMapper) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusHistoryMapper = statusHistoryMapper;
-        this.eventPublisher = eventPublisher;
+        this.outboxEventMapper = outboxEventMapper;
+        this.objectMapper = objectMapper;
     }
 
     @Override
     public Order save(Order order) {
-        // 先取走事件快照：事件从聚合内存中清空，后续即使持久化失败、事务回滚，
-        // afterCommit 也不会触发——事件随回滚一起丢弃，绝不发"幽灵事件"。
+        // 取走事件快照：事件从聚合内存中清空，与第 8 讲相同
         List<DomainEvent> pendingEvents = order.pullEvents();
         Order saved = order.id() == null ? insert(order) : update(order);
-        registerPublicationAfterCommit(pendingEvents);
+        // 事件与业务数据写在同一个事务里：本方法整体处于调用方的事务中，
+        // 下面这些 insert 与订单/订单项/历史的 insert 同生共死
+        appendOutboxEvents(pendingEvents);
         return saved;
     }
 
     /**
-     * 注册"事务提交后再发消息"。Spring 在事务真正提交成功后回调 afterCommit，
-     * 事务回滚时该回调不会执行；无活跃事务（教学/测试直连，语句已自动提交）
-     * 时直接发送，属于防御分支。
+     * 把本批事件写成 outbox 行。payload 就是发往 MQ 的消息体 JSON
+     * （与中继器投递、订阅方收到的消息体逐字节一致），事件名落 event_type
+     * （= 消息 tag），事件 ID 落 event_id（= 消息 keys，表内唯一）。
      */
-    private void registerPublicationAfterCommit(List<DomainEvent> events) {
-        if (events.isEmpty()) {
-            return;
+    private void appendOutboxEvents(List<DomainEvent> events) {
+        for (DomainEvent event : events) {
+            OutboxEventDO row = new OutboxEventDO();
+            row.setEventId(event.eventId());
+            row.setAggregateType(AGGREGATE_TYPE_ORDER);
+            row.setAggregateId(event.orderNo());
+            row.setEventType(event.eventName());
+            row.setPayload(toJson(event));
+            row.setStatus(OutboxEventDO.STATUS_PENDING);
+            row.setRetryCount(0);
+            outboxEventMapper.insert(row);
         }
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    eventPublisher.publishAll(events);
-                }
-            });
-        } else {
-            eventPublisher.publishAll(events);
+    }
+
+    private String toJson(DomainEvent event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            // 事件 record 全是固定字段，正常不会走到；走到说明编程错误，直接 fail 事务
+            throw new IllegalStateException("领域事件序列化失败: " + event.eventName(), e);
         }
     }
 

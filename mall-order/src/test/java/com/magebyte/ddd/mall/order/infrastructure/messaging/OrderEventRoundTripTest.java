@@ -26,11 +26,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 领域事件真实 RocketMQ 往返测试：聚合保存 → 事务提交 → afterCommit 发送 →
+ * 领域事件真实 RocketMQ 往返测试（第 9 讲起走 Outbox 链路）：
+ * 聚合保存 → 事务提交（业务数据 + outbox 行同事务落库）→ 中继器投递 →
  * 最小消费者收到并落入内存 sink。
  *
- * <p>不加 {@code @Transactional}：事件在 afterCommit 发送，事务必须真实提交，
- * 回滚型测试事务会把发送一起回滚掉。测试数据在 {@link AfterEach} 物理清理。
+ * <p>不加 {@code @Transactional}：事件要靠事务真实提交后留在 outbox 表里，
+ * 回滚型测试事务会把 outbox 行一起回滚掉。测试数据在 {@link AfterEach} 物理清理。
+ *
+ * <p>定时轮询在测试配置里静音，每轮中继由测试手动调用
+ * {@link OutboxEventRelay#relayOnce()} 驱动（生产环境由 @Scheduled 每 2 秒触发）。
  */
 @SpringBootTest
 class OrderEventRoundTripTest {
@@ -49,6 +53,8 @@ class OrderEventRoundTripTest {
     private PlatformTransactionManager transactionManager;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private OutboxEventRelay relay;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final List<String> createdOrderNos = new ArrayList<>();
@@ -61,6 +67,9 @@ class OrderEventRoundTripTest {
             List<Long> ids = jdbcTemplate.queryForList(
                     "SELECT id FROM t_order WHERE order_no IN (" + orderNoPlaceholders + ")",
                     Long.class, createdOrderNos.toArray());
+            // outbox 行按 aggregate_id（订单号）清理，与订单表是否还在无关
+            jdbcTemplate.update("DELETE FROM t_outbox_event WHERE aggregate_id IN ("
+                    + orderNoPlaceholders + ")", createdOrderNos.toArray());
             if (!ids.isEmpty()) {
                 String idPlaceholders = String.join(",",
                         ids.stream().map(x -> "?").toList());
@@ -86,6 +95,7 @@ class OrderEventRoundTripTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         Order saved = tx.execute(status -> orderRepository.save(order));
         createdOrderNos.add(saved.orderNo());
+        relay.relayOnce();   // 驱动一轮 Outbox 中继（生产环境由定时任务触发）
 
         ReceivedOrderEvent event = sink.awaitByTag("OrderCreated", WAIT_LIMIT)
                 .orElseThrow(() -> new AssertionError("等待窗口内未收到 OrderCreated 事件"));
@@ -114,6 +124,7 @@ class OrderEventRoundTripTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         Order saved = tx.execute(status -> orderRepository.save(order));
         createdOrderNos.add(saved.orderNo());
+        relay.relayOnce();
         sink.awaitByTag("OrderCreated", WAIT_LIMIT)
                 .orElseThrow(() -> new AssertionError("前置条件：OrderCreated 未到达"));
         sink.clear();
@@ -121,6 +132,7 @@ class OrderEventRoundTripTest {
         saved.markPaid(Money.of("1599.00"), "payment-callback", LocalDateTime.now());
         long started = System.currentTimeMillis();
         tx.executeWithoutResult(status -> orderRepository.save(saved));
+        relay.relayOnce();
 
         ReceivedOrderEvent event = sink.awaitByTag("OrderPaid", WAIT_LIMIT)
                 .orElseThrow(() -> new AssertionError("等待窗口内未收到 OrderPaid 事件"));
@@ -160,5 +172,10 @@ class OrderEventRoundTripTest {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM t_order WHERE user_id = ?", Integer.class, 9103L);
         assertEquals(0, count);
+        // outbox 行与业务数据同事务回滚，连"待发事件"的痕迹都不留
+        Integer outboxCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM t_outbox_event WHERE aggregate_id = ?",
+                Integer.class, order.orderNo());
+        assertEquals(0, outboxCount, "事务回滚后 outbox 行必须一起消失");
     }
 }

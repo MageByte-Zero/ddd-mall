@@ -7,8 +7,9 @@ import java.time.LocalDateTime;
  *
  * <p>判别标准：事件名是过去时（OrderCreated、OrderPaid……），表示"事实已经发生"，
  * 发布方不关心谁订阅、订阅方处理是否成功——它只负责把事实说出来。
- * 事件由聚合根在业务动作发生的那一刻抛出（{@code raise}），先收集在聚合内部，
- * 仓储保存聚合同事务后再交给发布端口（{@link DomainEventPublisher}）发往消息中间件。
+ * 事件由聚合根在业务动作发生的那一刻抛出（{@code raise}），先收集在聚合内部；
+ * 仓储保存聚合时，事件与业务数据在同一事务写入 outbox 表，事务提交后由中继器
+ * 交给发布端口（{@link DomainEventPublisher}）发往消息中间件。
  *
  * <p>本接口是纯 Java：不依赖 Spring、Jackson、RocketMQ 任何框架，
  * 领域层零框架依赖由 ArchUnit 测试编译期守护。

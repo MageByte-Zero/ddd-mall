@@ -62,3 +62,10 @@ rocketmq:
   producer:
     group: mall-order-producer
     sendMessageTimeout: 10000
+
+ddd:
+  outbox:
+    # Outbox 中继器轮询间隔：投递延迟（最坏约等于一个间隔）与数据库轮询压力的取舍
+    relay-interval-ms: 2000
+    # 应用启动后首次轮询的延迟，给 broker 注册/消费者装配留缓冲
+    relay-initial-delay-ms: 5000

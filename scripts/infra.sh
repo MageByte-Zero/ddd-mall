@@ -65,7 +65,7 @@ init_rocketmq_topics() {
       sleep 2
     done
     if [ "$ok_flag" = 1 ]; then
-      ok "RocketMQ topic 已就绪: $t（生产实践：topic 预创建，不依赖 broker 自动创建）"
+      ok "RocketMQ topic 已就绪: ${t}（生产实践：topic 预创建，不依赖 broker 自动创建）"
     else
       warn "topic $t 预创建失败（broker 未注册？）；broker 开了 autoCreateTopicEnable，应用首条消息仍会成功，只是首次延迟较高"
     fi

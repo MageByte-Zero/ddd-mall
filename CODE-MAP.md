@@ -105,19 +105,23 @@
 - `OrderItemMapper extends BaseMapper<OrderItemDO>` — L6（订单项无独立仓储，随聚合根存取）
 - `OrderStatusHistoryDO`（@TableName t_order_status_history；无 @Version/@TableLogic，只增不改）— L7
 - `OrderStatusHistoryMapper extends BaseMapper<OrderStatusHistoryDO>` — L7（历史无独立仓储，随聚合根存取）
-- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6，L7 扩历史：insert 全量写历史；update 按库中已存节数 delta 追加尾段；读出按 id 升序重组历史链。L8 扩事件：构造器注入 `DomainEventPublisher`；`save()` 开头 `pullEvents()` 快照事件，持久化后 `registerPublicationAfterCommit`——有活跃事务则注册 `TransactionSynchronization.afterCommit`（事务提交后才发 MQ，回滚则整批丢弃，杜绝幽灵事件），无活跃事务直接发（防御分支）
+- `OutboxEventDO`（@TableName t_outbox_event；状态常量 STATUS_PENDING/SENT/FAILED）— L9：Outbox 事件行；字段 eventId（=消息 keys）/aggregateType（"Order"）/aggregateId（=订单号）/eventType（=事件名/消息 tag）/payload（发往 MQ 的消息体 JSON）/status/retryCount/nextRetryAt/createdAt/sentAt；只住基础设施层
+- `OutboxEventMapper extends BaseMapper<OutboxEventDO>` — L9
+- `OrderRepositoryImpl implements OrderRepository`（@Repository；聚合↔DO 翻译）— L6，L7 扩历史：insert 全量写历史；update 按库中已存节数 delta 追加尾段；读出按 id 升序重组历史链。L8 扩事件：afterCommit 注册发送。**L9 改为 Outbox 写入**：构造器注入 `OutboxEventMapper` + `ObjectMapper`（不再注入 `DomainEventPublisher`）；`save()` 开头 `pullEvents()` 快照事件，持久化业务表后 `appendOutboxEvents()`——事件序列化成 payload 与业务数据写在**同一个本地事务**（要成一起成、回滚一起消失）；afterCommit/TransactionSynchronization 相关代码已移除
 
-#### infrastructure/messaging/（RocketMQ 适配，L8）
-- `OrderEventPublisher implements DomainEventPublisher`（@Component）— L8：RocketMQ 适配器；topic 常量 `order-events`，destination 语法 `topic:tag`（tag=事件名），`syncSend` 发 JSON（rocketmq-spring Jackson 转换器），消息 keys=eventId；只管"怎么发"
+#### infrastructure/messaging/（RocketMQ 适配，L8；Outbox 中继 L9）
+- `OrderEventPublisher implements DomainEventPublisher`（@Component）— L8：RocketMQ 适配器；topic 常量 `order-events`，destination 语法 `topic:tag`（tag=事件名），`syncSend` 发 JSON（rocketmq-spring Jackson 转换器），消息 keys=eventId；只管"怎么发"。L9 起调用方由仓储 afterCommit 变为 Outbox 中继器
+- `OutboxEventRelay`（@Component）— L9：Outbox 中继器（Message Relay）。`@Scheduled(fixedDelayString="${ddd.outbox.relay-interval-ms:2000}", initialDelayString="${ddd.outbox.relay-initial-delay-ms:5000}")` 定时入口 `relayTick()`；包级公开 `relayOnce()`（测试手动驱动一轮，返回成功投递数）：`fetchPending()` 捞 status=PENDING 且退避到期的行（id 升序、LIMIT 100）→ payload 反序列化为事件 record（EVENT_TYPES 映射 5 个事件名）→ 调 `DomainEventPublisher.publishAll` 复用 L8 发送链路 → 成功 `markSent`（status=SENT + sent_at），失败 `markRetryBackoff`（retry_count+1、指数退避 5s/10s/20s/40s…封顶 5min 写 next_retry_at；重试 5 次置 FAILED）；payload 损坏/未知事件名直接 FAILED（毒消息不占轮询）。**先发后标记**：at-least-once，重复投递由消费端幂等收口（L14）
 - `OrderEventLoggerConsumer`（@Component + `@RocketMQMessageListener(topic="order-events", consumerGroup="mall-order-event-logger", selectorExpression="*")`，`RocketMQListener<MessageExt>`）— L8：最小消费者，打日志并存入 sink；真实业务订阅方在 L12/L17 进场后本类退役
 - `DomainEventSink`（@Component，synchronizedList 内存落点）— L8：教学/测试观察窗口，`offer` / `awaitByTag(tag, timeout)` / `all()` / `clear()`；测试断言"5 秒内到达"与载荷内容
 - `ReceivedOrderEvent`（record：tag/keys/jsonBody/receivedAt:Instant）— L8
+- 测试组件 `TestFaultEventPublisher`（src/test，@Component @Primary，包装 OrderEventPublisher，`failNext(n)` 前 n 次发布抛异常）— L9：故障注入；放 test 源码随组件扫描装配，保证所有 @SpringBootTest 共用一个上下文/一个 RocketMQ 消费实例
 
 #### infrastructure/config/
 - `MybatisPlusConfig`（OptimisticLockerInnerInterceptor，让 @Version 真生效）— L6
 
 #### 启动类 — L6
-- `OrderApplication` 补 `@MapperScan("com.magebyte.ddd.mall.order.infrastructure.persistence")`（第 4 讲预留的首个 Mapper 落地点）
+- `OrderApplication` 补 `@MapperScan("com.magebyte.ddd.mall.order.infrastructure.persistence")`（第 4 讲预留的首个 Mapper 落地点）；L9 补 `@EnableScheduling`（开启 @Scheduled 检测，OutboxEventRelay 轮询生效）
 
 #### application/（空，待 L11 引入 OrderApplicationService）
 
@@ -129,7 +133,7 @@
 
 ### Schema (Flyway)
 - `V1__init_order_schema.sql` — t_order / t_order_item / t_order_status_history / t_outbox_event / undo_log — L4
-  - `t_outbox_event` 表 L4 已建，L8 **不读写**（本讲直接 afterCommit 发 MQ）；L9 Outbox 模式启用该表（事务内写事件、事务后轮询投递）
+  - `t_outbox_event`（event_id 唯一键 uk_event_id、idx_status(status, next_retry_at)；列：event_id/aggregate_type/aggregate_id/event_type/payload/status(PENDING/SENT/FAILED)/retry_count/next_retry_at/created_at/sent_at）：L4 已建，L8 不读写，**L9 启用**——仓储在业务事务内写 PENDING 行，OutboxEventRelay 轮询投递成功标 SENT
 
 ### mall-inventory (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L12
 
@@ -168,6 +172,7 @@
 | L6 | `Order` / `OrderItem` / `Money` / `OrderStatus` / `Address` / `OrderRepository` / `OrderDomainException`；`OrderDO` / `OrderItemDO` / `OrderMapper` / `OrderItemMapper` / `OrderRepositoryImpl` / `MybatisPlusConfig`；`@MapperScan` 落地 | — | — |
 | L7 | `StatusChange`（record 值对象）；`OrderStatusHistoryDO` / `OrderStatusHistoryMapper`；`interfaces/rest/GlobalExceptionHandler`（领域异常→422，返回统一响应 Result）；`Result<T>`（mall-commons，统一响应体） | `Order`：新增 `markShipped` / `confirmReceived` / `statusHistory()`，`markPaid`/`cancel`/`reconstitute` 签名扩参（操作人/原因/历史链），所有迁移经私有 `recordChange` 唯一入口落历史；`OrderRepositoryImpl`：历史随聚合同事务写入（insert 全量、update delta 追加）、读出按 id 升序重组；`OrderStatus` 注释更新；`interfaces/package-info.java` 依赖方向说明补充异常翻译 | — |
 | L8 | `domain/event/` 子包：`DomainEvent` 接口、5 个 record 事件（OrderCreated/OrderPaid/OrderShipped/OrderReceived/OrderCancelled，事件名同 L1 词汇表，schemaVersion=1，消息体自包含 eventName/schemaVersion）、`DomainEventPublisher` 端口；`infrastructure/messaging/`：`OrderEventPublisher`（RocketMQ 适配器，topic `order-events`，tag=事件名，keys=eventId，syncSend JSON）、`OrderEventLoggerConsumer`（最小消费者，consumerGroup `mall-order-event-logger`）、`DomainEventSink`/`ReceivedOrderEvent`（教学内存落点）；测试 `OrderDomainEventTest`（5 用例纯 JUnit）、`OrderEventRoundTripTest`（3 用例真实 RocketMQ 往返：创建/支付 5 秒内到达实测 71ms/53ms、回滚无幽灵事件）。环境适配：父 pom 显式锁 `rocketmq-client`/`rocketmq-acl` = 5.3.1（SCA BOM 压到 5.1.4 导致 `setNamespaceV2` NoSuchMethodError，rocketmq-spring 2.3.1 需 5.3.x）；`docker-compose/rocketmq/broker.properties` `brokerIP1` 由 `rocketmq-broker` 改 `127.0.0.1`（宿主机 JVM 经发布端口连 broker，docker 网络别名宿主不可解析）；`scripts/infra.sh` up 增加 topic `order-events` 预创建（mqadmin，重试等待 broker 注册） | `Order`：新增 `pullEvents()`，`create()` 抛 OrderCreatedEvent、`recordChange()` 成功后 `raiseEventFor` 抛迁移事件，`markPaid` 校验顺序调整（先校验后落 paidAmount），类 Javadoc 补"事件可达"不变量；`OrderRepositoryImpl`：注入发布端口，save 拉事件快照 + afterCommit 注册发送 | —。`mvn clean test` 54 用例全绿（L7 为 46） |
+| L9 | `infrastructure/persistence/`：`OutboxEventDO`（t_outbox_event，状态常量 PENDING/SENT/FAILED）、`OutboxEventMapper`；`infrastructure/messaging/`：`OutboxEventRelay`（@Scheduled 中继器：捞 PENDING → 复用 DomainEventPublisher 发送 → 先发后标记；失败 retry_count+1 指数退避，5 次置 FAILED）；测试：`OutboxEventRelayTest`（6 用例纯 Mockito：成功标记 SENT/失败退避重试/发送与标记间崩溃重复投递/重试耗尽 FAILED/毒消息 FAILED/退避序列）、`OutboxEventRoundTripTest`（3 用例真实 MySQL+RocketMQ：提交即 PENDING 行→中继投递→SENT 且 keys=event_id；回滚后 outbox 行与订单一起消失；故障注入首次失败 PENDING+退避、到期重试成功 SENT）、`TestFaultEventPublisher`（@Primary 故障注入）、`src/test/resources/application-dev.yml`（测试静音定时轮询）；配置 `application.yml` `ddd.outbox.relay-interval-ms=2000` / `relay-initial-delay-ms=5000`；启动类 `@EnableScheduling` | `OrderRepositoryImpl`：移除 afterCommit/TransactionSynchronization 直发逻辑与 DomainEventPublisher 注入，改为同事务写 outbox 行（注入 OutboxEventMapper + ObjectMapper，appendOutboxEvents/toJson）；`OrderApplication`：加 @EnableScheduling；`DomainEvent`/`DomainEventPublisher`/`OrderEventPublisher` Javadoc 更新为 Outbox 语义；`OrderEventRoundTripTest`：改为提交后手动驱动 relayOnce()，回滚用例增加 outbox 行消失断言，cleanup 增加 t_outbox_event 清理；`scripts/infra.sh`：第 68 行 `$t（` 改 `${t}（`（非 UTF-8 locale 下多字节字节并入变量名触发 unbound variable） | L8 的 `registerPublicationAfterCommit` 私有方法及仓储对 `DomainEventPublisher` 的依赖（afterCommit 直发路径，被 Outbox 同事务写入替代；DomainEventPublisher 端口本身保留，由 OutboxEventRelay 调用）。`mvn clean compile -q` exit 0；`mvn test -pl mall-order -am` **63 用例全绿**（L8 为 54；+6 中继单测 +3 Outbox 往返集成）；真实 jar 定时链路观测：PENDING 行提交后约 1 个轮询间隔（2s）+~20ms 完成投递并标 SENT，消费者 6ms 内收到 |
 | L11 | `OrderApplicationService` / `OrderController` | `Order` 可能加公开方法 | — |
 | ... | ... | ... | ... |
 

@@ -1,0 +1,8 @@
+# 测试环境覆盖：Outbox 中继器的定时轮询在测试中静音（间隔拉到 1 小时）。
+# 集成测试需要确定性——定时线程什么时候触发不可断言；测试改为手动调用
+# OutboxEventRelay.relayOnce() 精确驱动每一轮中继。
+# 定时调度本身（@Scheduled 装配）由真实 jar 冷启动日志与手动 SQL 投行观测验证。
+ddd:
+  outbox:
+    relay-interval-ms: 3600000
+    relay-initial-delay-ms: 3600000

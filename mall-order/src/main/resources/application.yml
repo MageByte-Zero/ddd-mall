@@ -41,21 +41,21 @@ mybatis-plus:
       logic-not-delete-value: 0
 
 seata:
-  # 暂不启用 Seata；第 10 讲引入 AT 模式时改为 true
-  enabled: false
+  enabled: true
   application-id: mall-order
   tx-service-group: ddd-mall-tx-group
+  service:
+    # 事务分组 → TC 集群名映射
+    vgroup-mapping:
+      ddd-mall-tx-group: default
+    # 教学网络形态：TC 在 docker 容器（注册的 bridge IP 对宿主机不可达），
+    # 应用在宿主机经发布端口连 TC，用静态地址列表；容器化部署改 registry.type=nacos 即可
+    grouplist:
+      default: 127.0.0.1:8091
   registry:
-    type: nacos
-    nacos:
-      server-addr: localhost:8848
-      namespace: ""
-      group: SEATA_GROUP
+    type: file
   config:
-    type: nacos
-    nacos:
-      server-addr: localhost:8848
-      group: SEATA_GROUP
+    type: file
 
 rocketmq:
   name-server: localhost:9876

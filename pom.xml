@@ -33,7 +33,10 @@
              spring-cloud-alibaba BOM 把 rocketmq-client/acl 压到 5.1.4 会 NoSuchMethodError，
              这里显式对齐 broker 镜像 5.3.1（第 8 讲领域事件实证）。 -->
         <rocketmq-client.version>5.3.1</rocketmq-client.version>
-        <seata-spring-boot.version>2.0.0</seata-spring-boot.version>
+        <!-- Seata 客户端版本：2.x 起迁入 Apache（groupId org.apache.seata）。
+             SCA BOM 自带 2.1.0，但 Docker Hub 的 apache/seata-server:2.1.0 标签
+             实际打包的是 2.0.0（镜像内 libs 核验），故客户端与服务端统一锁 2.2.0。 -->
+        <seata-spring-boot.version>2.2.0</seata-spring-boot.version>
         <sentinel-version>1.8.8</sentinel-version>
         <archunit.version>1.4.1</archunit.version>
     </properties>
@@ -77,6 +80,13 @@
                 <groupId>org.apache.rocketmq</groupId>
                 <artifactId>rocketmq-acl</artifactId>
                 <version>${rocketmq-client.version}</version>
+            </dependency>
+            <!-- 显式锁定 Seata 客户端版本（SCA BOM 自带 2.1.0，这里做升级锚点，
+                 防止 BOM 升级把客户端版本悄悄带走） -->
+            <dependency>
+                <groupId>org.apache.seata</groupId>
+                <artifactId>seata-spring-boot-starter</artifactId>
+                <version>${seata-spring-boot.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

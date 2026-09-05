@@ -84,7 +84,10 @@ services:
       - "8080:8080"
 
   seata-server:
-    image: seataio/seata-server:2.0.0
+    # 2.x 起迁入 Apache 孵化：镜像仓库由 seataio/ 迁到 apache/。
+    # 注意 apache/seata-server:2.1.0 标签实际打包的是 2.0.0（libs 核验），
+    # 客户端与服务端统一锁 2.2.0（父 pom seata-spring-boot.version）
+    image: apache/seata-server:2.2.0
     container_name: ddd-seata
     restart: unless-stopped
     environment:
@@ -96,7 +99,6 @@ services:
     volumes:
       - seata_data:/seata-server
       - ./seata/application.yml:/seata-server/resources/application.yml:ro
-      - ./seata/registry.conf:/seata-server/resources/registry.conf:ro
 
   sentinel-dashboard:
     image: bladex/sentinel-dashboard:1.8.8

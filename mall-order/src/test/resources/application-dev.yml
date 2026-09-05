@@ -6,3 +6,8 @@ ddd:
   outbox:
     relay-interval-ms: 3600000
     relay-initial-delay-ms: 3600000
+
+# 测试环境关闭 Seata 自动装配：全局事务行为用真实 jar + TC 的端到端实验验证
+# （见第 10 讲证据记录），单元/集成测试只验证用例编排与本地事务。
+seata:
+  enabled: false

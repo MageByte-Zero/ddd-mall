@@ -1,5 +1,7 @@
 server:
   port: 8082
+  servlet:
+    context-path: /
 
 spring:
   application:
@@ -16,15 +18,16 @@ spring:
       discovery:
         server-addr: localhost:8848
       config:
-        # 骨架阶段只用本地 application.yml；第 20 讲引入 Nacos 配置中心时反转此开关
+        # 骨架阶段只用本地 application.yml；配置中心讲次再反转此开关
         enabled: false
         server-addr: localhost:8848
         file-extension: yaml
         import-check:
           enabled: false
   flyway:
-    # 库存 schema 在第 12 讲（库存预占与释放）才建表；此前 Flyway 保持关闭
-    enabled: false
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
 
 mybatis-plus:
   configuration:
@@ -36,3 +39,20 @@ mybatis-plus:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
+seata:
+  enabled: true
+  application-id: mall-inventory
+  tx-service-group: ddd-mall-tx-group
+  service:
+    # 事务分组 → TC 集群名映射
+    vgroup-mapping:
+      ddd-mall-tx-group: default
+    # 教学网络形态：TC 在 docker 容器（注册的 bridge IP 对宿主机不可达），
+    # 应用在宿主机经发布端口连 TC，用静态地址列表；容器化部署改 registry.type=nacos 即可
+    grouplist:
+      default: 127.0.0.1:8091
+  registry:
+    type: file
+  config:
+    type: file

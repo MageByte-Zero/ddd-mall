@@ -5,29 +5,36 @@ spring:
   application:
     name: seata-server
 
+# Seata 2.x 控制台模块（console）启动时强依赖这两个占位符；
+# 本文件挂载覆盖了 jar 内自带的 application.yml，必须显式给出，
+# 否则 CustomUserDetailsServiceImpl 解析 ${console.user.username} 失败、容器重启循环
+console:
+  user:
+    username: seata
+    password: seata
+
 logging:
   config: classpath:logback-spring.xml
   file:
     path: ${user.home}/logs/seata
   level:
-    io.seata: info
+    org.apache.seata: info
 
 seata:
+  # 教学环境：事务会话存储用本地文件（file）；注册中心走 Nacos，
+  # 与 4 个业务应用同一个注册中心；配置先用本地文件
+  # （Nacos 配置中心在后续配置管理讲次统一引入）
   config:
-    type: nacos
-    nacos:
-      server-addr: localhost:8848
-      namespace:
-      group: SEATA_GROUP
-      username: nacos
-      password: nacos
+    type: file
   registry:
     type: nacos
     nacos:
       application: seata-server
-      server-addr: localhost:8848
+      # 容器内访问同 compose 网络里的 Nacos 用服务名，不能写 localhost
+      server-addr: nacos:8848
       namespace:
       group: SEATA_GROUP
+      cluster: default
       username: nacos
       password: nacos
   store:
@@ -36,3 +43,9 @@ seata:
     service-port: 8091
     max-commit-retry-timeout: 100
     max-rollback-retry-timeout: 100
+  # Seata 2.x 控制台安全模块（JWT）强依赖此占位符；挂载配置覆盖 jar 默认时必须显式给出
+  security:
+    secretKey: SeataSecretKey0c382ef121d778043159209298fd40bf3850a017
+    tokenValidityInMilliseconds: 1800000
+    ignore:
+      urls: /,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.jpeg,/**/*.ico,/api/v1/auth/login,/version.json,/health,/error

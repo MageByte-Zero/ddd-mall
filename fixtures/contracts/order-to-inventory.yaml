@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: 订单 → 库存 集成契约
+  version: 1.1.0
+  summary: 订单 BC 作为唯一调用方使用库存 BC 的两个 HTTP 端点
+  description: |
+    这份契约描述订单限界上下文（mall-order，核心域）调用库存限界上下文
+    （mall-inventory，支撑域）的全部 HTTP 表面。它是两边代码的共同参照：
+
+    - 服务端实现：mall-inventory 的 `interfaces/rest/InventoryController`；
+    - 客户端实现：mall-order 的 `infrastructure/remote/InventoryFeignApi`
+      与其 `FeignInventory*Adapter` 适配器；
+    - 第 11 讲起随订单取消用例引入归还端点，此前只有扣减端点。
+
+    两个端点是一个业务动作的两个方向：下单时把库存划走，取消时把它还回去。
+    字段形状刻意保持一致（都是 skuCode + quantity），调用方复用同一个 Feign 接口。
+
+    错误语义统一：参数不满足格式要求 → 400；服务能听懂请求但业务规则不允许
+    （库存不足、归还越界）→ 422，响应体带具体原因。这两种都代表调用方这次请求失败，
+    订单侧的全局事务据此回滚。
+servers:
+  - url: http://mall-inventory:8082
+    description: 经 Nacos 服务发现的内部地址
+paths:
+  /api/inventories/deductions:
+    post:
+      operationId: deductInventory
+      summary: 扣减可售库存（下单方向）
+      description: |
+        条件更新：`available_stock = available_stock - quantity` 且库存充足才命中。
+        库存不足时返回 422，订单侧的全局事务随即回滚，订单不会停留在待支付。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeductInventoryRequest'
+      responses:
+        '200':
+          description: 扣减成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          description: 库存不足或扣减数量非法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+  /api/inventories/releases:
+    post:
+      operationId: releaseInventory
+      summary: 归还可售库存（取消 / 退款方向）
+      description: |
+        条件更新：`available_stock = available_stock + quantity` 且归还后不超过
+        总库存才命中。越界即判定为疑似重复释放，返回 422——库存虚增不会立刻报错，
+        它会在下一次大促里变成超卖，所以这里宁可拒绝。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseInventoryRequest'
+      responses:
+        '200':
+          description: 归还成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          description: 归还越界（超过总库存，含重复释放）或 SKU 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+components:
+  responses:
+    BadRequest:
+      description: 请求体未通过 Jakarta Bean Validation（缺字段、数量小于 1 等）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ResultVoid'
+  schemas:
+    DeductInventoryRequest:
+      type: object
+      required: [skuCode, quantity]
+      properties:
+        skuCode:
+          type: string
+          minLength: 1
+          description: 库存侧 SKU 编码，形如 SKU-1001
+          example: SKU-1001
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+    ReleaseInventoryRequest:
+      type: object
+      required: [skuCode, quantity]
+      properties:
+        skuCode:
+          type: string
+          minLength: 1
+          example: SKU-1001
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+    ResultVoid:
+      type: object
+      description: |
+        mall-commons 的统一响应体 Result<Void>：成功 code=200，
+        失败 code 沿用 HTTP 状态码语义（400 / 422），message 携带可读原因。
+      required: [code]
+      properties:
+        code:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: OK
+        data:
+          nullable: true
+          description: 这两个端点无业务返回数据，恒为 null

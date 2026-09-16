@@ -19,4 +19,12 @@ public interface InventoryFeignApi {
     @PostMapping(value = "/api/inventories/deductions",
             consumes = "application/json", produces = "application/json")
     Result<Void> deduct(@RequestBody InventoryDeductionRequest request);
+
+    /**
+     * 归还库存。归还越界（超过总库存，含重复释放）等业务失败返回 HTTP 422，
+     * Feign 抛 FeignException，适配器翻译后触发取消用例的全局回滚。
+     */
+    @PostMapping(value = "/api/inventories/releases",
+            consumes = "application/json", produces = "application/json")
+    Result<Void> release(@RequestBody InventoryReleaseRequest request);
 }

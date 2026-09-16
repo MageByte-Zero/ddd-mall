@@ -47,4 +47,16 @@ public class InventoryRepositoryImpl implements InventoryRepository {
                         .eq(InventoryDO::getSkuCode, skuCode)
                         .ge(InventoryDO::getAvailableStock, quantity));
     }
+
+    @Override
+    public int release(String skuCode, int quantity) {
+        // 归还方向的护栏同样下沉到 SQL：只有"还完之后不超过总库存"才命中。
+        // 领域守卫（Inventory#release）拦的是单线程内的越界，这条 WHERE
+        // 拦的是两个取消请求同时进来时的并发越界——两者缺一不可。
+        return inventoryMapper.update(null,
+                Wrappers.<InventoryDO>lambdaUpdate()
+                        .setSql("available_stock = available_stock + " + quantity)
+                        .eq(InventoryDO::getSkuCode, skuCode)
+                        .apply("available_stock + " + quantity + " <= total_stock"));
+    }
 }

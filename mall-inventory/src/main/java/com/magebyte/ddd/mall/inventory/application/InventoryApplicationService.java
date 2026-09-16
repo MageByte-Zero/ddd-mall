@@ -42,4 +42,25 @@ public class InventoryApplicationService {
             throw new InventoryDomainException("库存不足（并发扣减冲突）: " + skuCode);
         }
     }
+
+    /**
+     * 归还库存（订单取消用例的逆向分支）。
+     *
+     * <p>和 {@link #deduct} 一样是 AT 分支事务边界：XID 由调用方的 HTTP 头带过来，
+     * 本地 {@link Transactional} 被 Seata 数据源代理登记成分支。订单取消时
+     * "订单状态改了但库存没还回来"是要钱的错误，所以这一支必须和订单侧同成同败。
+     *
+     * @param skuCode  SKU 编码
+     * @param quantity 归还数量（必须为正，且不得让可售库存超过总库存）
+     */
+    @Transactional
+    public void release(String skuCode, int quantity) {
+        Inventory inventory = inventoryRepository.findBySkuCode(skuCode)
+                .orElseThrow(() -> new InventoryDomainException("库存记录不存在: " + skuCode));
+        inventory.release(quantity);
+        int affected = inventoryRepository.release(skuCode, quantity);
+        if (affected == 0) {
+            throw new InventoryDomainException("库存归还越界（疑似重复释放或并发冲突）: " + skuCode);
+        }
+    }
 }

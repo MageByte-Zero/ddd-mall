@@ -2,6 +2,7 @@ package com.magebyte.ddd.mall.order.interfaces.rest;
 
 import com.magebyte.ddd.mall.commons.response.Result;
 import com.magebyte.ddd.mall.order.domain.OrderDomainException;
+import com.magebyte.ddd.mall.order.domain.OrderNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -27,5 +28,15 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
     public Result<Void> handleDomainException(OrderDomainException e) {
         return Result.error(HttpStatus.UNPROCESSABLE_ENTITY.value(), e.getMessage());
+    }
+
+    /**
+     * 找不到资源与"业务不允许"是两回事：前者 404，后者 422。
+     * 分开之后调用方只用看状态码就能区分"我传错订单号"和"这笔订单不能这么操作"。
+     */
+    @ExceptionHandler(OrderNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public Result<Void> handleNotFoundException(OrderNotFoundException e) {
+        return Result.error(HttpStatus.NOT_FOUND.value(), e.getMessage());
     }
 }

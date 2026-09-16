@@ -34,4 +34,16 @@ public class InventoryController {
         inventoryApplicationService.deduct(request.skuCode(), request.quantity());
         return Result.ok();
     }
+
+    /**
+     * 归还库存（订单取消/退款方向）。成功返回 200 + 统一响应体；
+     * 归还越界（超过总库存，含重复释放）等业务失败返回 422，
+     * 异常经 HTTP 回到订单 BC，触发取消用例的全局事务回滚。
+     */
+    @PostMapping("/releases")
+    @ResponseStatus(HttpStatus.OK)
+    public Result<Void> release(@Valid @RequestBody ReleaseInventoryRequest request) {
+        inventoryApplicationService.release(request.skuCode(), request.quantity());
+        return Result.ok();
+    }
 }

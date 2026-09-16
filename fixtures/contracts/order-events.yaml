@@ -1,0 +1,165 @@
+asyncapi: 2.6.0
+info:
+  title: 订单领域事件总线
+  version: 1.0.0
+  description: |
+    订单限界上下文（mall-order，核心域）向外发布的领域事件契约。
+
+    语义约定（与第 8 讲、第 9 讲的实现一致，后续讲次禁止单方面改动）：
+
+    - 事件代表**已经发生的业务事实**，事件名统一用过去时；
+    - 事件与业务数据在同一个本地事务写入 outbox 表，由中继器在事务提交后投递；
+    - 投递语义是 at-least-once：**订阅方必须自己幂等**，不能假设"只收到一次"；
+    - 每条消息的 `eventId`（消息 keys）是排查与幂等的依据，`schemaVersion`
+      用于新老消费者共存时的载荷演进。
+
+    第 11 讲把这份文件补成对五个事件的完整描述。此前它的意义只是"事件名列表"，
+    从第 17、23、25、26 讲开始，跨 BC 集成与契约测试都以本文件为单一来源。
+defaultContentType: application/json
+channels:
+  order-events:
+    description: |
+      订单领域事件总线。RocketMQ topic 为 `order-events`，事件名作为消息 tag，
+      订阅方用 selectorExpression 按事件名过滤；`eventId` 作为消息 keys。
+    bindings:
+      rocketmq:
+        topic: order-events
+    subscribe:
+      operationId: consumeOrderEvents
+      summary: 消费订单领域事件（订阅方视角）
+      message:
+        oneOf:
+          - $ref: '#/components/messages/OrderCreated'
+          - $ref: '#/components/messages/OrderPaid'
+          - $ref: '#/components/messages/OrderShipped'
+          - $ref: '#/components/messages/OrderReceived'
+          - $ref: '#/components/messages/OrderCancelled'
+components:
+  messages:
+    OrderCreated:
+      name: OrderCreated
+      title: 订单已创建
+      description: 用户下单成功，订单处于待支付（PENDING_PAY），库存已被划走。
+      bindings:
+        rocketmq:
+          tag: OrderCreated
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            required: [userId]
+            properties:
+              userId:
+                type: integer
+                format: int64
+                example: 9527
+    OrderPaid:
+      name: OrderPaid
+      title: 订单已支付
+      description: |
+        支付成功，订单进入已支付（PAID）。第 11 讲起由订单支付用例异步发出。
+        `paidAmount` 与 `totalAmount` 相等是订单聚合的金额守恒不变量，
+        订阅方可以信任这个值。
+      bindings:
+        rocketmq:
+          tag: OrderPaid
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            required: [paidAmount]
+            properties:
+              paidAmount:
+                $ref: '#/components/schemas/Money'
+    OrderShipped:
+      name: OrderShipped
+      title: 订单已发货
+      bindings:
+        rocketmq:
+          tag: OrderShipped
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            required: [operatedBy]
+            properties:
+              operatedBy:
+                type: string
+                example: 'admin:1001'
+    OrderReceived:
+      name: OrderReceived
+      title: 订单已收货
+      description: 用户确认收货，订单到达终态 RECEIVED。
+      bindings:
+        rocketmq:
+          tag: OrderReceived
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            required: [operatedBy]
+            properties:
+              operatedBy:
+                type: string
+                example: 'user:9527'
+    OrderCancelled:
+      name: OrderCancelled
+      title: 订单已取消
+      description: |
+        待支付订单被取消（用户主动或超时自动），订单到达终态 CANCELLED。
+        第 11 讲的取消用例额外保证：这条事件被投递时，库存归还必然也已经完成
+        （两者在同一个 AT 全局事务里）——下游不需要为"取消成功但库存没还"兜底。
+      bindings:
+        rocketmq:
+          tag: OrderCancelled
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/EventEnvelope'
+          - type: object
+            required: [reason, operatedBy]
+            properties:
+              reason:
+                type: string
+                maxLength: 200
+                example: 用户主动取消
+              operatedBy:
+                type: string
+                example: 'user:9527'
+  schemas:
+    EventEnvelope:
+      type: object
+      description: 五个事件共有的自描述头部，跟随每一条消息体一起传输。
+      required: [eventId, eventName, schemaVersion, orderNo, occurredOn]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: 事件唯一 ID，发往 RocketMQ 时作为消息 keys。
+          example: 6f1c9a3e-4e4b-4a34-9f2b-2f6b6bbd5a11
+        eventName:
+          type: string
+          description: 事件名，等于消息 tag。
+          example: OrderCancelled
+        schemaVersion:
+          type: integer
+          description: 载荷结构版本，当前均为 1；不兼容变更时 +1。
+          example: 1
+        orderNo:
+          type: string
+          description: 事件源订单号。不用数据库自增 id——事件出生时订单尚未入库。
+          example: OD20260916113400001234
+        occurredOn:
+          type: string
+          format: date-time
+          description: 业务事实发生时刻（不是消息发送时刻）。
+          example: '2026-09-16T11:34:05.123'
+    Money:
+      type: object
+      description: |
+        金额值对象。用嵌套对象而不是裸字符串/浮点数：金额的比较必须走 BigDecimal，
+        直接比字符串会把 `1.0` 和 `1.00` 判成不相等。
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          example: 198.00

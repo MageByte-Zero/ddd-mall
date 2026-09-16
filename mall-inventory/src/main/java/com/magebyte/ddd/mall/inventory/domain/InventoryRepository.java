@@ -18,4 +18,13 @@ public interface InventoryRepository {
      * @return 实际影响行数（0 或 1）
      */
     int deduct(String skuCode, int quantity);
+
+    /**
+     * 条件归还：{@code available_stock = available_stock + quantity}，
+     * 且仅当归还后不超过总库存时命中（返回影响行数 1）。
+     * 影响行数为 0 表示并发归还或越界归还，调用方按重复释放处理。
+     *
+     * @return 实际影响行数（0 或 1）
+     */
+    int release(String skuCode, int quantity);
 }

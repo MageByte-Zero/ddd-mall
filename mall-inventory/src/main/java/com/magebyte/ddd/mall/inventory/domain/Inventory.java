@@ -6,14 +6,16 @@ import java.util.Objects;
 /**
  * 库存（Inventory）聚合根。
  *
- * <p>本讲（Seata AT 跨 BC 事务）只引入最小库存模型：一个 SKU 一行、一个可售库存数、
- * 一条 {@link #deduct(int)} 扣减守卫。预占/释放、库存流水、乐观锁防超卖
- * 在库存预占讲次重写本聚合（预占库存 + 可售库存双字段语义 + 乐观锁）。
+ * <p>第 10 讲只引入了扣减：一个 SKU 一行、一个可售库存数、
+ * 一条 {@link #deduct(int)} 扣减守卫；第 11 讲为订单取消用例补上对称的
+ * {@link #release(int)} 归还守卫。真正的"预占 / 释放"双字段模型、库存流水与
+ * 乐观锁防超卖，在库存预占讲次重写本聚合。
  *
  * <p>守护的不变量（订单需求文档第 4 节"库存守恒"的最小子集）：
  * <ul>
  *   <li>扣减数量必须为正；</li>
- *   <li>可售库存不得扣成负数——库存不足直接拒绝。</li>
+ *   <li>可售库存不得被扣成负数——库存不足直接拒绝；</li>
+ *   <li>可售库存不得被还到总库存之上——越界即疑似重复释放，直接拒绝。</li>
  * </ul>
  */
 public class Inventory {
@@ -63,6 +65,29 @@ public class Inventory {
                     + "，可售 " + availableStock + "，请求扣减 " + quantity);
         }
         this.availableStock -= quantity;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 归还可售库存（订单取消、退款等场景的逆向动作）。
+     *
+     * <p>与 {@link #deduct} 对称，但守卫方向相反：扣减防的是"扣成负数"，
+     * 归还防的是"还到总库存之上"——后者同样是一种数据污染，而且更隐蔽：
+     * 库存虚增不会立刻报错，它会在下一次大促里变成超卖。
+     *
+     * <p>这条上界同时是最朴素的重复释放防线：同一笔订单的库存被释放两次，
+     * 第二次必然撞在总库存的天花板上，领域层拒绝执行而不是静默累加。
+     */
+    public void release(int quantity) {
+        if (quantity <= 0) {
+            throw new InventoryDomainException("归还数量必须为正数：" + quantity);
+        }
+        if (availableStock + quantity > totalStock) {
+            throw new InventoryDomainException("归还数量超过总库存（疑似重复释放）：SKU=" + skuCode
+                    + "，可售 " + availableStock + "，总库存 " + totalStock
+                    + "，请求归还 " + quantity);
+        }
+        this.availableStock += quantity;
         this.updatedAt = LocalDateTime.now();
     }
 

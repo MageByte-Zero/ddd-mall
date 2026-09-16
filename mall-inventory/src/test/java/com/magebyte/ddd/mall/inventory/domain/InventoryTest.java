@@ -50,4 +50,38 @@ class InventoryTest {
                 Inventory.reconstitute(1L, "SKU-1001", "示例商品",
                         10, 20, LocalDateTime.now(), LocalDateTime.now()));
     }
+
+    @Test
+    void release_increases_available_stock() {
+        Inventory inventory = inventory(90);
+        inventory.release(10);
+        assertEquals(100, inventory.availableStock());
+    }
+
+    @Test
+    void release_rejects_returning_beyond_total_stock() {
+        // 可售已经等于总库存，再还一分钱都是数据污染（重复释放的典型形态）
+        Inventory inventory = inventory(100);
+        InventoryDomainException ex = assertThrows(InventoryDomainException.class,
+                () -> inventory.release(1));
+        assertTrue(ex.getMessage().contains("超过总库存"));
+        assertEquals(100, inventory.availableStock());
+    }
+
+    @Test
+    void release_rejects_non_positive_quantity() {
+        Inventory inventory = inventory(90);
+        assertThrows(InventoryDomainException.class, () -> inventory.release(0));
+        assertThrows(InventoryDomainException.class, () -> inventory.release(-5));
+        assertEquals(90, inventory.availableStock());
+    }
+
+    @Test
+    void deduct_then_release_returns_to_original_stock() {
+        Inventory inventory = inventory(100);
+        inventory.deduct(30);
+        assertEquals(70, inventory.availableStock());
+        inventory.release(30);
+        assertEquals(100, inventory.availableStock());
+    }
 }

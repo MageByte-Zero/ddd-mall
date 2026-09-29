@@ -2,3 +2,11 @@
 # （见第 10 讲证据记录），单元/集成测试只验证聚合守卫与本地条件扣减。
 seata:
   enabled: false
+
+spring:
+  datasource:
+    hikari:
+      # 第 12 讲并发实验需要真实并发：默认池只有 10 条连接，
+      # 1000 个请求会排成一条队，测出来的不是并发而是串行。
+      # 64 是本机 MySQL max_connections（默认 151）留足余量后的取值。
+      maximum-pool-size: 64

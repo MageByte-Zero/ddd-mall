@@ -80,7 +80,7 @@ REFUND_REQUESTED → REFUNDED
 
 ## 8. 失败样例（写作时必须触发至少 1 类）
 
-- 库存超卖（D2 fixture：`fixtures/incidents/inventory-oversold.md`，第 12 讲首次使用前补）
+- 库存超卖（D2 fixture：`fixtures/incidents/inventory-oversold.md`，第 12 讲补；含守恒被破坏的存量数据形态与并发超卖窗口的实测数据）
 - 重复扣减（D2 fixture：`fixtures/incidents/duplicate-deduct.md`，第 13 讲首次使用前补）
 - 消息丢失（D2 fixture：`fixtures/incidents/message-lost.md`，第 14 讲首次使用前补）
 - Seata 回滚失败（D2 fixture：`fixtures/incidents/seata-rollback-failed.md`，第 10 讲首次使用前补）

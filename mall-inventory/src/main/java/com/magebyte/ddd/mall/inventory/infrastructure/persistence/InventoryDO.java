@@ -21,7 +21,9 @@ public class InventoryDO {
     private String skuName;
     private Integer totalStock;
     private Integer availableStock;
-    /** 乐观锁版本号：库存预占讲次（防超卖）启用，本列先随表建好。 */
+    /** 已预占库存：第 12 讲随 Flyway V2 加入，守恒为「可售 + 已预占 == 总库存」。 */
+    private Integer reservedStock;
+    /** 乐观锁版本号：第 12 讲启用（聚合整体保存的并发护栏，见 InventoryRepository#save）。 */
     @Version
     private Integer version;
     private LocalDateTime createdAt;
@@ -67,6 +69,14 @@ public class InventoryDO {
 
     public void setAvailableStock(Integer availableStock) {
         this.availableStock = availableStock;
+    }
+
+    public Integer getReservedStock() {
+        return reservedStock;
+    }
+
+    public void setReservedStock(Integer reservedStock) {
+        this.reservedStock = reservedStock;
     }
 
     public Integer getVersion() {

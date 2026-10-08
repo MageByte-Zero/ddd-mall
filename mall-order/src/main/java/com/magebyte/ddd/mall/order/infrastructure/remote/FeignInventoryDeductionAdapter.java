@@ -24,9 +24,15 @@ public class FeignInventoryDeductionAdapter implements InventoryDeductionPort {
     }
 
     @Override
+    @Deprecated
     public void deduct(String skuCode, int quantity) {
+        throw new OrderDomainException("库存调用必须提供预占身份");
+    }
+
+    @Override
+    public void deduct(String reservationNo, String skuCode, int quantity) {
         try {
-            inventoryFeignApi.deduct(new InventoryDeductionRequest(skuCode, quantity));
+            inventoryFeignApi.deduct(new InventoryDeductionRequest("RESERVE:" + reservationNo, reservationNo, skuCode, quantity));
         } catch (FeignException ex) {
             // 不吞掉错误体：422 响应里带着库存侧的失败原因，直接透传给用例/读者
             String detail = ex.contentUTF8();

@@ -25,6 +25,18 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class InventoryGlobalExceptionHandler {
 
+    @ExceptionHandler({com.magebyte.ddd.mall.inventory.domain.InventoryIdempotencyException.class, org.springframework.dao.DuplicateKeyException.class})
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Result<Void> handleIdentityConflict(RuntimeException ex) {
+        return Result.error(409, "库存动作身份冲突，请核对 requestKey 与业务单据");
+    }
+
+    @ExceptionHandler(org.springframework.dao.QueryTimeoutException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Result<Void> handleLockTimeout(org.springframework.dao.QueryTimeoutException ex) {
+        return Result.error(409, "库存锁等待超时，请稍后重试整个用例");
+    }
+
     @ExceptionHandler(InventoryDomainException.class)
     @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
     public Result<Void> handleDomainException(InventoryDomainException ex) {

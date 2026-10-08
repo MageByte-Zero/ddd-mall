@@ -16,7 +16,7 @@ public interface InventoryFeignApi {
     /**
      * 扣减库存。库存不足等业务失败返回 HTTP 422，Feign 抛 FeignException。
      */
-    @PostMapping(value = "/api/inventories/deductions",
+    @PostMapping(value = "/api/inventories/reservations",
             consumes = "application/json", produces = "application/json")
     Result<Void> deduct(@RequestBody InventoryDeductionRequest request);
 

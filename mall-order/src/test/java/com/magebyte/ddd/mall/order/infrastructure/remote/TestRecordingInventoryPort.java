@@ -48,6 +48,11 @@ public class TestRecordingInventoryPort implements InventoryDeductionPort {
     }
 
     @Override
+    public void deduct(String reservationNo, String skuCode, int quantity) {
+        deduct(skuCode, quantity);
+    }
+
+    @Override
     public void deduct(String skuCode, int quantity) {
         // 先记录"被调用了"，再判故障：失败用例也要能断言端口被调用
         synchronized (recorded) {

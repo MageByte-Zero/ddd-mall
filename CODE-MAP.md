@@ -79,8 +79,8 @@
   - 退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位，迁移方法待 L15
 
 #### domain/（跨 BC 端口，L10/L11）
-- `InventoryDeductionPort`（纯 Java 端口接口）— L10：订单对"库存扣减"能力的出口抽象；`void deduct(String skuCode, int quantity)`；实现住基础设施层（依赖倒置），领域层不知道 Feign/HTTP。第 17/19 讲防腐层在适配器一侧加厚，本端口不动
-- `InventoryReleasePort`（纯 Java 端口接口）— L11：与扣减端口**对称的逆向能力出口**；`void release(String skuCode, int quantity)`；同样是纯 Java 零依赖接口，实现住基础设施层。取消用例只需要"把库存还回去"这一个能力，故意不从 `InventoryDeductionPort` 借道——反向操作与正向操作是两种业务能力，混在一个端口里会让实现方被迫做 if/else
+- `InventoryDeductionPort`（纯 Java 端口接口）— L10：订单对"库存扣减"能力的出口抽象；`void deduct(reservationNo,skuCode,quantity)`（L13 新重载；旧二参数签名 ⚠ deprecated at L-13）；实现住基础设施层（依赖倒置），领域层不知道 Feign/HTTP。第 17/19 讲防腐层在适配器一侧加厚，本端口不动
+- `InventoryReleasePort`（纯 Java 端口接口）— L11：与扣减端口**对称的逆向能力出口**；`void release(reservationNo,skuCode,quantity)`（L13 新重载；旧二参数签名 ⚠ deprecated at L-13）；同样是纯 Java 零依赖接口，实现住基础设施层。取消用例只需要"把库存还回去"这一个能力，故意不从 `InventoryDeductionPort` 借道——反向操作与正向操作是两种业务能力，混在一个端口里会让实现方被迫做 if/else
 
 #### domain/event/（领域事件子包，L8 增量引入）
 - `DomainEvent`（纯 Java 接口，零框架依赖，ArchUnit 守）— L8：访问器 `eventId()`（UUID）/ `eventName()`（线上 wire name，= 消息 tag）/ `schemaVersion()`（当前全为 1）/ `orderNo()`（事件源业务身份；不用数据库自增 id——事件出生在入库前）/ `occurredOn()`
@@ -125,9 +125,9 @@
 - 测试组件 `TestFaultEventPublisher`（src/test，@Component @Primary，包装 OrderEventPublisher，`failNext(n)` 前 n 次发布抛异常）— L9：故障注入；放 test 源码随组件扫描装配，保证所有 @SpringBootTest 共用一个上下文/一个 RocketMQ 消费实例
 
 #### infrastructure/remote/（跨 BC 调用适配，L10/L11）
-- `InventoryFeignApi`（@FeignClient(name="mall-inventory", contextId="inventoryClient")）— L10：只描述线协议 `POST /api/inventories/deductions`，不做业务判断；L11 加对称端点 `POST /api/inventories/releases`（`Result<Void> release(InventoryReleaseRequest)`）
-- `InventoryDeductionRequest`（record：skuCode/quantity）— L10：Feign 请求体
-- `InventoryReleaseRequest`（record：skuCode/quantity）— L11：归还请求体，字段形状与扣减刻意保持一致，调用方复用同一个 Feign 接口
+- `InventoryFeignApi`（@FeignClient(name="mall-inventory", contextId="inventoryClient")）— L10：L13 线协议 `POST /api/inventories/reservations`，不做业务判断；L11 加对称端点 `POST /api/inventories/releases`（`Result<Void> release(InventoryReleaseRequest)`（订单只检查成功，库存响应还含原结果快照））
+- `InventoryDeductionRequest`（record：requestKey/reservationNo/skuCode/quantity）— L13 扩展 L10：Feign 请求体
+- `InventoryReleaseRequest`（record：requestKey/reservationNo/skuCode/quantity）— L13 扩展 L11：归还请求体，字段形状与扣减刻意保持一致，调用方复用同一个 Feign 接口
 - `FeignInventoryDeductionAdapter implements InventoryDeductionPort`（@Component）— L10：领域语言→HTTP 翻译；`FeignException` 翻译成 `OrderDomainException`（带 422 响应体透传），异常向上传播触发全局回滚
 - `FeignInventoryReleaseAdapter implements InventoryReleasePort`（@Component）— L11：归还方向的同款翻译；`FeignException` → `OrderDomainException`，异常穿透到应用服务触发取消用例的全局回滚
 - `SeataFeignConfig`（@Configuration + RequestInterceptor bean）— L10：把当前线程 `RootContext.getXID()` 写进请求头 `TX_XID`；服务端由 Seata starter 的 `JakartaSeataWebMvcConfigurer` 拦截器自动读取绑定（官方"微服务框架支持"的 HTTP 传播形态）
@@ -200,7 +200,7 @@
 - `MybatisPlusConfig`（@Configuration，`OptimisticLockerInnerInterceptor`）— L12：让 `@Version` 真正生效。不注册该拦截器，`version` 只是普通整数列
 
 #### application/
-- `InventoryApplicationService`（@Service）— L10 → **L12 五个用例**：
+- `InventoryApplicationService`（@Service）— L10 → **L12 五个用例；L13 匿名 reserve/release/confirm 仅作 deprecated 教学回归，新入口使用 IdempotentInventoryService**：
   - `reserve(skuCode, quantity)`— `@Transactional`，AT 分支；领域守卫 + `reserveAtomically` 原子预占（**热点路径，不走乐观锁**）
   - `release(skuCode, quantity)`— `@Transactional`；领域守卫 + `save` 乐观锁，冲突抛 `InventoryConcurrencyException`
   - `confirm(skuCode, quantity)`— `@Transactional`；同上走乐观锁（**本讲不接订单侧调用**，第 25 讲事件总线接入）
@@ -211,9 +211,9 @@
 
 #### interfaces/rest/
 - `InventoryController`（@RestController `/api/inventories`）— L10 → **L12 五个端点**：
-  - `POST /api/inventories/deductions` → 200；**语义由"扣减"改为"预占"**（L12）。路径沿用 L10 契约不做破坏性改名，第 13 讲随幂等键一并正名为 `/api/inventories/reservations`
-  - `POST /api/inventories/releases` → 200；释放越界 422，版本冲突 409
-  - `POST /api/inventories/confirmations` → 200（L12）
+  - `POST /api/inventories/deductions` → 422；⚠ deprecated at L-13，保留路径但拒绝匿名写入。新 `/api/inventories/reservations` 使用身份请求 → 200 + 原结果快照
+  - `POST /api/inventories/releases` → 200 + 原结果快照；L13 必须有 requestKey/reservationNo，缺字段400，生命周期不允许422，身份冲突/锁等待409
+  - `POST /api/inventories/confirmations` → 200 + 原结果快照；L13 必须有身份，与释放终态互斥
   - `POST /api/inventories/restocks` → 200（L12）
   - `GET /api/inventories/{skuCode}` → 200 + `Result<InventoryResponse>`（L12）
 - `DeductInventoryRequest`（record：skuCode/quantity，JSR-380）— L10；L12 语义改预占
@@ -236,6 +236,7 @@
 ### Schema
 - `V1__init_inventory_schema.sql` — L10：t_inventory（uk_sku_code；种子 SKU-1001 示例商品 100 件，INSERT IGNORE）+ undo_log（官方 DDL，uk_undo_log(xid, branch_id)）
 - `V2__inventory_reservation_model.sql` — **L12**：加 `reserved_stock INT NOT NULL DEFAULT 0`；**历史数据校准** `UPDATE t_inventory SET reserved_stock = total_stock - available_stock WHERE total_stock > available_stock`（把第 10/11 讲"被扣掉却无记录的件数"解释为仍被预占，是唯一不丢信息的解释；真实项目须业务方核对预占单据）；建 `t_inventory_log`
+- `V3__inventory_idempotency.sql` — L13：预占单、动作回执两表及日志身份；唯一约束与旧余额边界见下方 L13 增量。
 - Flyway 在 L10 提前启用（原计划 L12；因 AT 需要 undo_log 与最小库存表）
 
 ### mall-payment (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L17
@@ -256,7 +257,7 @@
 
 | 调用方 | 被调方 | 方式 | 入口 | 一致性 | 引入讲次 |
 |---|---|---|---|---|---|
-| mall-order | mall-inventory | 同步 HTTP（Feign，服务发现负载均衡） | `POST /api/inventories/deductions` | Seata AT 全局事务内（XID 经 `TX_XID` 头传播） | L10；**L12 语义由"扣减"改为"预占"**（路径不动，第 13 讲随幂等键正名为 `/api/inventories/reservations`） |
+| mall-order | mall-inventory | 同步 HTTP（Feign，服务发现负载均衡） | `POST /api/inventories/reservations` | Seata AT 全局事务内（XID 经 `TX_XID` 头传播） | L10；**L12 语义由"扣减"改为"预占"**；L13 新接口带预占单和请求键，旧匿名扣减拒绝写入 |
 | mall-order | mall-inventory | 同步 HTTP（Feign，同一 Feign 接口的反向端点） | `POST /api/inventories/releases` | Seata AT 全局事务内（取消用例，与下单对称） | L11；**L12 上界语义由"总库存"改为"已预占"**，冲突时 409 |
 
 跨 BC 契约的单一来源是 `fixtures/contracts/`（L11 首次启用）：`order-to-inventory.yaml`（OpenAPI 3.0.3，订单→库存的扣减 + 归还两个端点）、`order-events.yaml`（AsyncAPI 2.6.0，订单对外发布的 5 个领域事件）。两边代码改动前先对齐契约；第 17、23、25、26 讲的集成与契约测试以它们为唯一参照。
@@ -288,3 +289,15 @@
 - 在 `Schema` 段加本讲的 Flyway 文件
 - 在 `每讲代码变更日志` 表里追加一行
 - 若本讲废弃了某符号，在该符号处加 `⚠ deprecated at L-N`
+
+## L13 增量（lesson-13 快照，2026-10-08）
+
+- **domain 新增**：不可变实体 `Reservation`（class，访问器 reservationNo/skuCode/quantity/state）与 `State.RESERVED/RELEASED/CONFIRMED`；`requireSame` 保护内容不可变，`finish` 保护整笔生命周期；`InventoryOperation`、`InventoryOperationResult`、`InventoryOperationStore`（跨层持久化端口）；`InventoryIdempotencyException`。
+- **application 新增**：`IdempotentInventoryService.reserve/release/confirm(InventoryOperation)` → `InventoryOperationResult`；各有 `@GlobalLock @Transactional`。先 SKU `FOR UPDATE`，再请求当前锁定读；重放回第一次快照；同键异参拒绝，换 key 的同业务动作拒绝。新路径在 SKU 锁内 `InventoryRepository.save`，不宣称沿用 L12 热点原子写吞吐。
+- **infrastructure 新增**：`InventoryOperationMapper` 与 `InventoryOperationStoreImpl`，只依赖 domain；SKU/回执/预占单使用当前锁定读；流水含业务单号与请求键。
+- **Schema V3**：新表 `t_inventory_reservation`（uk_reservation_no）、`t_inventory_operation`（uk_request_key、uk_reservation_action）；`t_inventory_log` 增加可空 reservation_no/request_key；旧库存余额不推断归属。身份 VARCHAR 使用 utf8mb4_bin。
+- **HTTP 当前协议**：`POST /reservations`、`POST /releases`、`POST /confirmations` 均收 `InventoryOperationRequest(requestKey,reservationNo,skuCode,quantity)`，返回 `Result<InventoryOperationResult>`。旧 `/deductions` 保留路径但 422 拒绝；旧二字段 `/releases`、`/confirmations` 输入400。
+- **⚠ deprecated at L-13**：`InventoryApplicationService.reserve/release/confirm(String,int)` 与 `InventoryController.reserve(DeductInventoryRequest)`；前者只供 L12 教学回归，后者 fail closed。`ReleaseInventoryRequest`、`ConfirmInventoryRequest` 类保留一讲但已无 HTTP 绑定。不能混用旧 release 消耗有归属的新预占。
+- **订单同步**：端口 `InventoryDeductionPort.deduct(reservationNo,skuCode,quantity)` / `InventoryReleasePort.release(reservationNo,skuCode,quantity)` 新重载，生产 Feign 适配器覆盖；旧二参数方法 deprecated 且生产适配器拒绝。默认新重载 fail closed 防未迁移适配器漏掉身份；测试 recording ports 明确覆盖。Feign `/reservations`，请求 key 为 `RESERVE:`/`RELEASE:` + reservationNo。订单用例传 `saved.orderNo()+":"+skuCode`。一次 POST /orders 每次生成新单号，未实现其入口重放去重。
+- **测试**：`InventoryIdempotencyTest`（真实 MySQL，无清库，独立 L13 SKU），`ArchitectureTest`（inventory 领域无外层依赖、基础设施不依赖应用/接口、应用不依赖基础设施/接口）。
+- 业务依据 D0 L13 契约；跨 BC 依据 `fixtures/contracts/order-to-inventory.yaml` 1.2.0；失败依据 `fixtures/incidents/duplicate-deduct.md`；决策依据 ADR-04。本讲不可变代码快照标签为 `lesson-13`，读者可从公开仓库取得；文章源码资料包提供相同实现。

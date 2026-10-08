@@ -45,6 +45,11 @@ public class TestRecordingReleasePort implements InventoryReleasePort {
     }
 
     @Override
+    public void release(String reservationNo, String skuCode, int quantity) {
+        release(skuCode, quantity);
+    }
+
+    @Override
     public void release(String skuCode, int quantity) {
         synchronized (recorded) {
             recorded.add(new Release(skuCode, quantity));

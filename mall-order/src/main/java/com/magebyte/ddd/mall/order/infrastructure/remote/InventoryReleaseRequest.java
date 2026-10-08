@@ -7,5 +7,5 @@ package com.magebyte.ddd.mall.order.infrastructure.remote;
  * 契约本身记在 {@code projects/ddd-mall/fixtures/contracts/order-to-inventory.yaml}，
  * 改契约先看那里。
  */
-public record InventoryReleaseRequest(String skuCode, int quantity) {
+public record InventoryReleaseRequest(String requestKey, String reservationNo, String skuCode, int quantity) {
 }

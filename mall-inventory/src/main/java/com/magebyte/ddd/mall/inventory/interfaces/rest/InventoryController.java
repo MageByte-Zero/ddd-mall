@@ -12,36 +12,33 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 库存接口层：库存四个用例的 HTTP 入口。
- *
- * <p>订单 BC 经 Feign 调用 {@code /deductions} 与 {@code /releases}；这两个端点同时是
- * Seata 全局事务在库存侧的入口（请求头 TX_XID 由 Seata 的 MVC 拦截器自动绑定）。
- *
- * <p><b>关于 {@code /deductions} 这个名字。</b>它做的是<b>预占</b>，不是扣减。
- * 路径沿用第 10 讲建立的跨 BC 契约，本讲只改语义不改路径——跨 BC 端点一旦发布就是
- * 别人的集成基线，为了一个更贴切的名字去打断它不划算。第 13 讲引入幂等键时会连同
- * 请求体一起把路径正名为 {@code /api/inventories/reservations}，那次改名有实打实的
- * 收益（幂等键要进请求体，反正是破坏性变更）。
- */
+/** L13：新预占/释放/出库必须带业务身份；旧扣减路径保留但拒绝写入。 */
 @RestController
 @RequestMapping("/api/inventories")
 public class InventoryController {
 
     private final InventoryApplicationService inventoryApplicationService;
+    private final com.magebyte.ddd.mall.inventory.application.IdempotentInventoryService idempotent;
 
-    public InventoryController(InventoryApplicationService inventoryApplicationService) {
+    public InventoryController(InventoryApplicationService inventoryApplicationService,
+            com.magebyte.ddd.mall.inventory.application.IdempotentInventoryService idempotent) {
+        this.idempotent = idempotent;
         this.inventoryApplicationService = inventoryApplicationService;
     }
 
     /**
      * 预占库存（订单创建方向）。成功 200；库存不足等业务失败 422。
      */
+    @Deprecated
     @PostMapping("/deductions")
     @ResponseStatus(HttpStatus.OK)
     public Result<Void> reserve(@Valid @RequestBody DeductInventoryRequest request) {
-        inventoryApplicationService.reserve(request.skuCode(), request.quantity());
-        return Result.ok();
+        throw new com.magebyte.ddd.mall.inventory.domain.InventoryDomainException("旧扣减入口已废弃，请使用带业务身份的 /reservations");
+    }
+
+    @PostMapping("/reservations")
+    public Result<com.magebyte.ddd.mall.inventory.domain.InventoryOperationResult> reserveIdentified(@Valid @RequestBody InventoryOperationRequest request) {
+        return Result.ok(idempotent.reserve(request.toCommand()));
     }
 
     /**
@@ -50,9 +47,8 @@ public class InventoryController {
      */
     @PostMapping("/releases")
     @ResponseStatus(HttpStatus.OK)
-    public Result<Void> release(@Valid @RequestBody ReleaseInventoryRequest request) {
-        inventoryApplicationService.release(request.skuCode(), request.quantity());
-        return Result.ok();
+    public Result<com.magebyte.ddd.mall.inventory.domain.InventoryOperationResult> release(@Valid @RequestBody InventoryOperationRequest request) {
+        return Result.ok(idempotent.release(request.toCommand()));
     }
 
     /**
@@ -61,9 +57,8 @@ public class InventoryController {
      */
     @PostMapping("/confirmations")
     @ResponseStatus(HttpStatus.OK)
-    public Result<Void> confirm(@Valid @RequestBody ConfirmInventoryRequest request) {
-        inventoryApplicationService.confirm(request.skuCode(), request.quantity());
-        return Result.ok();
+    public Result<com.magebyte.ddd.mall.inventory.domain.InventoryOperationResult> confirm(@Valid @RequestBody InventoryOperationRequest request) {
+        return Result.ok(idempotent.confirm(request.toCommand()));
     }
 
     /**

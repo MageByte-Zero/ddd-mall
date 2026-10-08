@@ -21,5 +21,10 @@ public interface InventoryDeductionPort {
      * @throws OrderDomainException 库存侧业务失败（库存不足等）时抛出，
      *                              由用例上的全局事务捕获并触发全局回滚
      */
+    @Deprecated // L13: 新业务必须给出预占身份
     void deduct(String skuCode, int quantity);
+
+    default void deduct(String reservationNo, String skuCode, int quantity) {
+        throw new OrderDomainException("该库存适配器尚未支持预占身份");
+    }
 }

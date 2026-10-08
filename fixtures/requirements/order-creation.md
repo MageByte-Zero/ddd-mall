@@ -51,7 +51,7 @@ REFUND_REQUESTED → REFUNDED
 1. **金额守恒**：`订单总金额 == ∑ 订单项小计`
 2. **库存守恒**：`已预占库存 + 可售库存 == 总库存`
 3. **状态机守恒**：状态变更必须经过合法迁移
-4. **幂等性**：同一 `idempotency_key` 的请求只生效一次
+4. **幂等性**：同一 `requestKey` 的库存动作只生效一次，异参拒绝；同一 `reservationNo + action` 不能换 key 再执行（L13 已实现）。订单创建请求去重与支付回调去重不因此自动成立。
 5. **事件可达**：订单状态变更后，对应的领域事件必须发布（Outbox 兜底）
 
 ## 5. 用例
@@ -84,3 +84,13 @@ REFUND_REQUESTED → REFUNDED
 - 重复扣减（D2 fixture：`fixtures/incidents/duplicate-deduct.md`，第 13 讲首次使用前补）
 - 消息丢失（D2 fixture：`fixtures/incidents/message-lost.md`，第 14 讲首次使用前补）
 - Seata 回滚失败（D2 fixture：`fixtures/incidents/seata-rollback-failed.md`，第 10 讲首次使用前补）
+
+## L13 库存动作契约（2026-10-08）
+
+- 预占单 `reservationNo` 在库存 BC 内唯一；本教学单SKU订单使用 `orderNo:skuCode`，正式多行同SKU订单须稳定订单行身份，不能复用本讲拼接方式掩盖歧义。
+- `requestKey` 在库存 BC 内全局唯一，跨动作也不能复用；RESERVE 与 RELEASE 使用不同键。相同键且业务身份、动作、SKU、数量完全相同，返回第一次结果快照。
+- 预占状态只允许 RESERVED→RELEASED 或 RESERVED→CONFIRMED；只支持整笔释放/出库，终态不能重复新动作。换请求键不绕过业务唯一性。
+- 幂等结果、业务预占、库存、流水处于同一本地事务；AT 场景结果是分支结果，必须经全局锁检查后才能向另一事务重放，不能将一阶段结果当全局成功。
+- L12 已预占余额不含订单归属，V3 不自动回填、不猜历史预占单；历史订单须先对账迁移或用 L12 完成教学回收再切换。新协议不能释放缺失预占单的余额。
+- 旧 `/deductions` 路径保留但拒绝执行；`/releases`、`/confirmations` 必须携带新字段。旧 Java 方法只保留教学回归，不作为新业务或生产回退。
+- 补货请求幂等、部分释放、自动过期回收、完整支付/MQ业务和订单创建入口去重不在 L13 实现范围。

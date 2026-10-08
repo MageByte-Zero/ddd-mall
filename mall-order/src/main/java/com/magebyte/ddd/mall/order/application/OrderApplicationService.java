@@ -85,7 +85,8 @@ public class OrderApplicationService {
         // 分支一：订单库本地事务（订单、订单项、状态历史、Outbox 事件行同生共死）
         Order saved = orderRepository.save(order);
         // 分支二：Feign → 库存 BC 扣减（XID 随 TX_XID 头传播，库存侧本地事务登记为分支）
-        inventoryDeduction.deduct(toInventorySkuCode(command.skuId()), command.quantity());
+        inventoryDeduction.deduct(saved.orderNo() + ":" + toInventorySkuCode(command.skuId()),
+                toInventorySkuCode(command.skuId()), command.quantity());
 
         if (command.simulateRollbackFailure()) {
             log.warn("教学故障注入：库存分支已提交，停留 {} 秒后抛出失败，观察全局回滚",
@@ -108,7 +109,7 @@ public class OrderApplicationService {
      * （PAID 不能再迁到 PAID，抛 {@link OrderDomainException}）；
      * 两个请求并发进来时，都读到 PENDING_PAY 都能过状态机，
      * 但 {@code @Version} 乐观锁只允许一个提交成功，另一个拿到
-     * "订单已被并发修改"。真正的幂等键在第 13 讲落地。
+     * "订单已被并发修改"。第 13 讲只落库存动作幂等；支付回调契约留给第 17 讲。
      *
      * @param command 支付命令
      * @return 支付后的订单详情
@@ -149,7 +150,8 @@ public class OrderApplicationService {
         Order saved = orderRepository.save(order);
         // 分支二：按下单时的数量原路归还（多 SKU 订单逐项调用）
         for (OrderItem item : saved.getItems()) {
-            inventoryRelease.release(toInventorySkuCode(item.skuId()), item.quantity());
+            inventoryRelease.release(saved.orderNo() + ":" + toInventorySkuCode(item.skuId()),
+                    toInventorySkuCode(item.skuId()), item.quantity());
         }
 
         if (command.simulateReleaseFailure()) {

@@ -23,9 +23,15 @@ public class FeignInventoryReleaseAdapter implements InventoryReleasePort {
     }
 
     @Override
+    @Deprecated
     public void release(String skuCode, int quantity) {
+        throw new OrderDomainException("库存调用必须提供预占身份");
+    }
+
+    @Override
+    public void release(String reservationNo, String skuCode, int quantity) {
         try {
-            inventoryFeignApi.release(new InventoryReleaseRequest(skuCode, quantity));
+            inventoryFeignApi.release(new InventoryReleaseRequest("RELEASE:" + reservationNo, reservationNo, skuCode, quantity));
         } catch (FeignException ex) {
             String detail = ex.contentUTF8();
             throw new OrderDomainException("库存服务归还失败（HTTP " + ex.status()

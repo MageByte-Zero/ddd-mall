@@ -55,6 +55,7 @@ public class InventoryApplicationService {
      * </ol>
      */
     @Transactional
+    @Deprecated // L13: 仅保留 L12 教学回归；新业务必须使用 IdempotentInventoryService
     public void reserve(String skuCode, int quantity) {
         Inventory inventory = requireInventory(skuCode);
         StockSnapshot before = inventory.snapshot();
@@ -76,6 +77,7 @@ public class InventoryApplicationService {
      * 由调用方决定重试整个用例还是放弃。
      */
     @Transactional
+    @Deprecated // L13: 仅保留 L12 教学回归；新业务必须使用 IdempotentInventoryService
     public void release(String skuCode, int quantity) {
         Inventory inventory = requireInventory(skuCode);
         StockSnapshot before = inventory.snapshot();
@@ -92,6 +94,7 @@ public class InventoryApplicationService {
      * 预占模型下，已支付的订单继续占着库存是<b>正确</b>的，货还在仓库里没发走。
      */
     @Transactional
+    @Deprecated // L13: 仅保留 L12 教学回归；新业务必须使用 IdempotentInventoryService
     public void confirm(String skuCode, int quantity) {
         Inventory inventory = requireInventory(skuCode);
         StockSnapshot before = inventory.snapshot();

@@ -22,5 +22,10 @@ public interface InventoryReleasePort {
      * @throws OrderDomainException 库存侧业务失败（重复释放、SKU 不存在等）时抛出，
      *                              由取消用例上的全局事务捕获并触发全局回滚
      */
+    @Deprecated // L13: 新业务必须给出预占身份
     void release(String skuCode, int quantity);
+
+    default void release(String reservationNo, String skuCode, int quantity) {
+        throw new OrderDomainException("该库存适配器尚未支持预占身份");
+    }
 }

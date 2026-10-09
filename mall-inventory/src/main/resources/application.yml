@@ -56,3 +56,6 @@ seata:
     type: file
   config:
     type: file
+
+rocketmq:
+  name-server: localhost:9876

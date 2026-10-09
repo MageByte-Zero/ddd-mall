@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: 订单领域事件总线
-  version: 1.0.0
+  version: 1.1.0
   description: |
     订单限界上下文（mall-order，核心域）向外发布的领域事件契约。
 
@@ -74,6 +74,11 @@ components:
     OrderShipped:
       name: OrderShipped
       title: 订单已发货
+      description: |
+        v2 携带发货时预占明细事实快照。库存 inventory-shipment-v2 订阅只接受 v2，
+        v1 缺少身份与数量时拒绝并保留失败恢复入口，不读取订单库补猜。
+        支付保持预占；发货本地事务写状态与 Outbox，库存异步整笔确认出库。
+        同 eventId 须核验内容；不同 eventId 仍使用 CONFIRM:reservationNo，防再次出库。
       bindings:
         rocketmq:
           tag: OrderShipped
@@ -81,8 +86,16 @@ components:
         allOf:
           - $ref: '#/components/schemas/EventEnvelope'
           - type: object
-            required: [operatedBy]
+            required: [operatedBy, lines]
             properties:
+              schemaVersion:
+                type: integer
+                const: 2
+              lines:
+                type: array
+                minItems: 1
+                items:
+                  $ref: "#/components/schemas/ShipmentLine"
               operatedBy:
                 type: string
                 example: 'admin:1001'
@@ -133,8 +146,9 @@ components:
       properties:
         eventId:
           type: string
-          format: uuid
-          description: 事件唯一 ID，发往 RocketMQ 时作为消息 keys。
+          minLength: 1
+          maxLength: 96
+          description: 稳定事件唯一 ID，当前生产端生成 UUID；重发保持原 ID，发往 RocketMQ 时作为 keys。
           example: 6f1c9a3e-4e4b-4a34-9f2b-2f6b6bbd5a11
         eventName:
           type: string
@@ -142,7 +156,7 @@ components:
           example: OrderCancelled
         schemaVersion:
           type: integer
-          description: 载荷结构版本，当前均为 1；不兼容变更时 +1。
+          description: 载荷结构版本，OrderShipped 为 2，其他事件为 1；不兼容变更时 +1。
           example: 1
         orderNo:
           type: string
@@ -153,6 +167,19 @@ components:
           format: date-time
           description: 业务事实发生时刻（不是消息发送时刻）。
           example: '2026-09-16T11:34:05.123'
+    ShipmentLine:
+      type: object
+      required: [reservationNo, skuCode, quantity]
+      properties:
+        reservationNo:
+          type: string
+          description: 当前单 SKU 行身份使用 orderNo:skuCode；同订单重复 SKU 发货拒绝。
+        skuCode:
+          type: string
+          minLength: 1
+        quantity:
+          type: integer
+          minimum: 1
     Money:
       type: object
       description: |

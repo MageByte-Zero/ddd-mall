@@ -10,3 +10,7 @@ spring:
       # 1000 个请求会排成一条队，测出来的不是并发而是串行。
       # 64 是本机 MySQL max_connections（默认 151）留足余量后的取值。
       maximum-pool-size: 64
+
+ddd:
+  inventory:
+    shipment-consumer-enabled: false

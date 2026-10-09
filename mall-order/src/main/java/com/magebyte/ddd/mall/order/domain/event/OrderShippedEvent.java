@@ -2,6 +2,7 @@ package com.magebyte.ddd.mall.order.domain.event;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -17,22 +18,32 @@ import java.util.UUID;
  * @param occurredOn     事件发生时间（发货时间）
  */
 public record OrderShippedEvent(String eventId, String eventName, int schemaVersion,
-                                String orderNo, String operatedBy, LocalDateTime occurredOn)
+                                String orderNo, String operatedBy, LocalDateTime occurredOn,
+                                List<ShipmentLine> lines)
         implements DomainEvent {
 
     /** 线上事件名 / 消息 tag：与第 1 讲锁定的领域事件词汇表一致。 */
     public static final String NAME = "OrderShipped";
 
-    /** 载荷 schema 版本，v1 为初版结构。 */
-    public static final int SCHEMA_VERSION = 1;
+    /** 载荷 schema 版本，v2 增加稳定预占明细事实快照。 */
+    public static final int SCHEMA_VERSION = 2;
 
     /** 聚合根迁移方法调用：事件 ID 在这里生成，事件名与版本固定。 */
-    public static OrderShippedEvent raise(String orderNo, String operatedBy, LocalDateTime when) {
+    public static OrderShippedEvent raise(String orderNo, String operatedBy, LocalDateTime when, List<ShipmentLine> lines) {
         return new OrderShippedEvent(UUID.randomUUID().toString(), NAME, SCHEMA_VERSION,
-                orderNo, operatedBy, when);
+                orderNo, operatedBy, when, List.copyOf(lines));
     }
 
+    /** v1 construction is retained for old domain tests; inventory rejects v1 without lines. */
+    @Deprecated
+    public static OrderShippedEvent raise(String orderNo, String operatedBy, LocalDateTime when) {
+        return new OrderShippedEvent(UUID.randomUUID().toString(), NAME, 1, orderNo, operatedBy, when, List.of());
+    }
+
+    public record ShipmentLine(String reservationNo, String skuCode, int quantity) {}
+
     public OrderShippedEvent {
+        lines = lines == null ? List.of() : List.copyOf(lines);
         Objects.requireNonNull(eventId, "事件 ID 不能为空");
         Objects.requireNonNull(eventName, "事件名不能为空");
         Objects.requireNonNull(orderNo, "事件源订单号不能为空");

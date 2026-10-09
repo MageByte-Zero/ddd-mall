@@ -203,7 +203,7 @@
 - `InventoryApplicationService`（@Service）— L10 → **L12 五个用例；L13 匿名 reserve/release/confirm 仅作 deprecated 教学回归，新入口使用 IdempotentInventoryService**：
   - `reserve(skuCode, quantity)`— `@Transactional`，AT 分支；领域守卫 + `reserveAtomically` 原子预占（**热点路径，不走乐观锁**）
   - `release(skuCode, quantity)`— `@Transactional`；领域守卫 + `save` 乐观锁，冲突抛 `InventoryConcurrencyException`
-  - `confirm(skuCode, quantity)`— `@Transactional`；同上走乐观锁（**本讲不接订单侧调用**，第 25 讲事件总线接入）
+  - `confirm(skuCode, quantity)`— `@Transactional`；同上走乐观锁（匿名教学旧入口；L14 的 OrderShipped v2 使用 IdempotentInventoryService.confirm，L25 扩展多订阅）
   - `restock(skuCode, quantity)`— `@Transactional`；同上走乐观锁
   - `get(skuCode)`— `@Transactional(readOnly = true)`，返回 `InventoryView`
   - 私有 `saveOrThrowConcurrent(...)`：版本冲突**不重试**（可重复读下同一事务重读是同一快照；重试需新事务，会把操作从 AT 分支摘出去）
@@ -301,3 +301,12 @@
 - **订单同步**：端口 `InventoryDeductionPort.deduct(reservationNo,skuCode,quantity)` / `InventoryReleasePort.release(reservationNo,skuCode,quantity)` 新重载，生产 Feign 适配器覆盖；旧二参数方法 deprecated 且生产适配器拒绝。默认新重载 fail closed 防未迁移适配器漏掉身份；测试 recording ports 明确覆盖。Feign `/reservations`，请求 key 为 `RESERVE:`/`RELEASE:` + reservationNo。订单用例传 `saved.orderNo()+":"+skuCode`。一次 POST /orders 每次生成新单号，未实现其入口重放去重。
 - **测试**：`InventoryIdempotencyTest`（真实 MySQL，无清库，独立 L13 SKU），`ArchitectureTest`（inventory 领域无外层依赖、基础设施不依赖应用/接口、应用不依赖基础设施/接口）。
 - 业务依据 D0 L13 契约；跨 BC 依据 `fixtures/contracts/order-to-inventory.yaml` 1.2.0；失败依据 `fixtures/incidents/duplicate-deduct.md`；决策依据 ADR-04。本讲不可变代码快照标签为 `lesson-13`，读者可从公开仓库取得；文章源码资料包提供相同实现。
+
+## L14 增量（本地快照，2026-10-08）
+
+- 订单：OrderShippedEvent schemaVersion 2 + ShipmentLine事实快照；Order.markShipped拒绝重复SKU身份；ShipOrderCommand/ShipOrderRequest与POST /api/orders/{orderNo}/shipment调用本地应用事务。旧raise签名deprecated保留v1回归，库存v2订阅拒绝猜缺失明细。
+- 投递：OrderEventPublisher验证SendResult==SEND_OK；可配置ddd.order.events-topic便于独立夹具。OutboxEventRelay只抓候选；独立OutboxEventDelivery.deliver(id)在@GlobalLock/@Transactional当前锁定读、重查状态后发送+标SENT；被阻塞行保留待重试，不算发送失败。
+- 库存：ShipmentFact/ConsumedEventStore领域端口；ShipmentApplicationService本地事务编排持久化事件去重+所有库存出库，稳定CONFIRM:reservationNo、排序SKU锁；ConsumedEventStoreImpl唯一插入冲突后当前共享读指纹；V4建t_consumed_event。
+- 接口：InventoryShipmentConsumer处于interfaces.messaging；严格v2字段、数量整数、已知字段标准化SHA-256指纹；异常传播；默认topic order-events/group inventory-shipment-v2，只有OrderShipped tag。库存新增rocketmq-spring 2.3.1依赖与nameserver配置，业务生产重试预算16，Native故障夹具专用组预算2。
+- 验证：SendStatus单测、ShipmentReliabilityTest并发/冲突/合法B/多SKU原子回滚/严格协议、ShipmentOutboxTest真实发货用例v2事实；ReliabilityProcess/OutboxProcess独立进程故障。实际结果以当前第14讲evidence为准，不把测试源存在当通过。
+- 调整：一个最小库存业务订阅从L25前移L14（用户批准）；L25保留多订阅、路由和Outbox演进。未实现跨事件有序、自动DLQ治理、去重TTL或远程副作用原子化。

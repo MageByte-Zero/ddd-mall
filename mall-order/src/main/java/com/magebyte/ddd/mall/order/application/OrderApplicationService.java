@@ -174,6 +174,14 @@ public class OrderApplicationService {
         return OrderDetail.from(findOrder(orderNo));
     }
 
+    /** 发货只改订单本地状态与事实快照；库存由事件订阅最终推进。 */
+    @Transactional
+    public OrderDetail shipOrder(ShipOrderCommand command) {
+        Order order = findOrder(command.orderNo());
+        order.markShipped(command.operatedBy(), LocalDateTime.now());
+        return OrderDetail.from(orderRepository.save(order));
+    }
+
     private Order findOrder(String orderNo) {
         return orderRepository.findByOrderNo(orderNo)
                 .orElseThrow(() -> new OrderNotFoundException("订单不存在: " + orderNo));

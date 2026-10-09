@@ -11,6 +11,8 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
 
 /**
  * 领域事件发布端口的 RocketMQ 适配器（基础设施层）。
@@ -23,7 +25,7 @@ import java.util.List;
  * <p>本类只负责"怎么发"。"什么时候发"在第 9 讲起由 Outbox 中继器
  * （{@link OutboxEventRelay}）决定：仓储在业务事务内把事件写进
  * t_outbox_event，事务提交后中继器逐行捞出、调用本端口投递，
- * 发成功才把行标记为 SENT。到达本方法的事件都来自已提交的事务，
+ * 发成功才把行标记为 SENT。中继经当前读与全局锁检查后才调用本方法，
  * 回滚的事务连 outbox 行一起回滚，幽灵事件在更上游被堵住。
  */
 @Component
@@ -33,6 +35,9 @@ public class OrderEventPublisher implements DomainEventPublisher {
     public static final String TOPIC = "order-events";
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventPublisher.class);
+
+    @org.springframework.beans.factory.annotation.Value("${ddd.order.events-topic:order-events}")
+    private String topic = TOPIC;
 
     private final RocketMQTemplate rocketMQTemplate;
 
@@ -44,11 +49,14 @@ public class OrderEventPublisher implements DomainEventPublisher {
     public void publishAll(List<DomainEvent> events) {
         for (DomainEvent event : events) {
             // RocketMQ destination 语法：topic:tag
-            String destination = TOPIC + ":" + event.eventName();
+            String destination = topic + ":" + event.eventName();
             Message<DomainEvent> message = MessageBuilder.withPayload(event)
                     .setHeader(RocketMQHeaders.KEYS, event.eventId())
                     .build();
-            rocketMQTemplate.syncSend(destination, message);
+            SendResult result = rocketMQTemplate.syncSend(destination, message);
+            if (result == null || result.getSendStatus() != SendStatus.SEND_OK) {
+                throw new IllegalStateException("Broker 未确认 SEND_OK: " + result);
+            }
             log.info("领域事件已发布: name={}, eventId={}, orderNo={}, destination={}",
                     event.eventName(), event.eventId(), event.orderNo(), destination);
         }

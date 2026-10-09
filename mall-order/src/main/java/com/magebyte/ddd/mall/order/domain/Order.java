@@ -202,6 +202,9 @@ public class Order {
     public void markShipped(String operatedBy, LocalDateTime when) {
         Objects.requireNonNull(operatedBy, "发货操作人不能为空");
         Objects.requireNonNull(when, "发货时间不能为空");
+        if (items.stream().map(OrderItem::skuId).distinct().count() != items.size()) {
+            throw new OrderDomainException("重复 SKU 明细尚未统一预占身份，不能发货");
+        }
         recordChange(OrderStatus.SHIPPED, "商家发货", operatedBy, when);
     }
 
@@ -313,7 +316,9 @@ public class Order {
                                LocalDateTime when) {
         switch (target) {
             case PAID -> events.add(OrderPaidEvent.raise(orderNo, paidAmount, when));
-            case SHIPPED -> events.add(OrderShippedEvent.raise(orderNo, operatedBy, when));
+            case SHIPPED -> events.add(OrderShippedEvent.raise(orderNo, operatedBy, when, items.stream()
+                    .map(item -> new OrderShippedEvent.ShipmentLine(orderNo + ":SKU-" + item.skuId(),
+                            "SKU-" + item.skuId(), item.quantity())).toList()));
             case RECEIVED -> events.add(OrderReceivedEvent.raise(orderNo, operatedBy, when));
             case CANCELLED ->
                     events.add(OrderCancelledEvent.raise(orderNo, reason, operatedBy, when));

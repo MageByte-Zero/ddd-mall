@@ -1,6 +1,7 @@
 package com.magebyte.ddd.mall.order.infrastructure.persistence;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Select;
 
 /**
  * Outbox 事件表 Mapper。
@@ -11,4 +12,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * （id 自增即事件产生顺序），LIMIT 批量大小。
  */
 public interface OutboxEventMapper extends BaseMapper<OutboxEventDO> {
+    @Select("SELECT * FROM t_outbox_event WHERE id=#{id} FOR UPDATE")
+    OutboxEventDO lockById(long id);
 }

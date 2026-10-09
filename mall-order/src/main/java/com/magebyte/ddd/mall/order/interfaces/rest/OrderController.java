@@ -6,6 +6,7 @@ import com.magebyte.ddd.mall.order.application.CreateOrderCommand;
 import com.magebyte.ddd.mall.order.application.OrderApplicationService;
 import com.magebyte.ddd.mall.order.application.OrderDetail;
 import com.magebyte.ddd.mall.order.application.PayOrderCommand;
+import com.magebyte.ddd.mall.order.application.ShipOrderCommand;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -88,6 +89,13 @@ public class OrderController {
     /**
      * 查询订单详情。不存在返回 404。
      */
+    @PostMapping("/{orderNo}/shipment")
+    public Result<OrderDetailResponse> ship(@PathVariable String orderNo,
+                                           @Valid @RequestBody ShipOrderRequest request) {
+        return Result.ok(OrderDetailResponse.from(orderApplicationService.shipOrder(
+                new ShipOrderCommand(orderNo, request.operatedBy()))));
+    }
+
     @GetMapping("/{orderNo}")
     @ResponseStatus(HttpStatus.OK)
     public Result<OrderDetailResponse> detail(@PathVariable String orderNo) {

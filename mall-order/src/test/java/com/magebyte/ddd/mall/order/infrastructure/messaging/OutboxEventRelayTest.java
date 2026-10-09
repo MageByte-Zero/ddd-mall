@@ -47,7 +47,9 @@ class OutboxEventRelayTest {
     void setUp() {
         outboxMapper = mock(OutboxEventMapper.class);
         eventPublisher = mock(DomainEventPublisher.class);
-        relay = new OutboxEventRelay(outboxMapper, eventPublisher, objectMapper);
+        relay = new OutboxEventRelay(outboxMapper, new OutboxEventDelivery(outboxMapper, eventPublisher, objectMapper));
+        when(outboxMapper.lockById(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(inv ->
+                outboxMapper.selectList((com.baomidou.mybatisplus.core.conditions.Wrapper<OutboxEventDO>) null).getFirst());
     }
 
     private OutboxEventDO pendingRow(DomainEvent event) throws Exception {
@@ -124,7 +126,7 @@ class OutboxEventRelayTest {
                 .doReturn(1)
                 .when(outboxMapper).updateById(any(OutboxEventDO.class));
 
-        assertThrows(RuntimeException.class, relay::relayOnce,
+        assertEquals(0, relay.relayOnce(),
                 "标记失败应让本轮中断（保守处理，剩余行下一轮再捞）");
         // 重启后第二轮：行还是 PENDING，再次被捞出 → 同一事件第二次发送
         assertEquals(1, relay.relayOnce());

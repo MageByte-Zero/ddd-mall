@@ -15,13 +15,12 @@ import java.util.Set;
  * PENDING_PAY → PAID → SHIPPED → RECEIVED
  *      ↓
  * CANCELLED
- *      ↓（PAID / SHIPPED 均可发起）
- * REFUND_REQUESTED → REFUNDED
+ * PAID / SHIPPED → REFUND_REQUESTED → REFUNDED
  * </pre>
  *
  * <p>终态：RECEIVED、CANCELLED、REFUNDED——没有任何出边。
  * 迁移方法（markPaid / markShipped / confirmReceived / cancel）与状态历史链
- * 住在 {@link Order} 聚合根上（第 7 讲）；退款两条边的迁移方法第 15 讲补齐。
+ * 住在 {@link Order} 聚合根上（第 7 讲）；退款两条边由 requestFullRefund / recordRefundResult 实现（第15讲）。
  */
 public enum OrderStatus {
 

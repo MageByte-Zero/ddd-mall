@@ -1,6 +1,8 @@
 package com.magebyte.ddd.mall.order.domain;
 
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
+import com.magebyte.ddd.mall.order.domain.event.RefundRequestedEvent;
+import com.magebyte.ddd.mall.order.domain.event.RefundCompletedEvent;
 import com.magebyte.ddd.mall.order.domain.event.OrderCancelledEvent;
 import com.magebyte.ddd.mall.order.domain.event.OrderCreatedEvent;
 import com.magebyte.ddd.mall.order.domain.event.OrderPaidEvent;
@@ -33,7 +35,8 @@ import java.util.concurrent.ThreadLocalRandom;
  *   <li>进入 PAID / CANCELLED 后订单项冻结，不允许再增改；</li>
  *   <li>事件可达：订单创建和每次合法状态迁移都抛出对应的领域事件
  *       （OrderCreated / OrderPaid / OrderShipped / OrderReceived /
- *       OrderCancelled），事件先收集在聚合内部，仓储保存后由发布端口发出；
+ *       OrderCancelled / RefundRequested / RefundCompleted），事件先收集在聚合内部，
+ *       仓储与业务数据共同写入Outbox，提交后由中继投递；
  *       重组历史不产生事件——事件只代表"新发生的事实"。</li>
  * </ul>
  */
@@ -55,6 +58,7 @@ public class Order {
     private final List<DomainEvent> events = new ArrayList<>();
     private Money totalAmount;
     private Money paidAmount;
+    private Refund refund;
     private Address address;
     private Integer version;
     private LocalDateTime createdAt;
@@ -97,6 +101,14 @@ public class Order {
                                      Money totalAmount, Money paidAmount,
                                      Address address, Integer version,
                                      LocalDateTime createdAt, LocalDateTime updatedAt) {
+        return reconstitute(id, orderNo, userId, status, items, statusHistory, totalAmount,
+                paidAmount, address, version, createdAt, updatedAt, null);
+    }
+
+    public static Order reconstitute(Long id, String orderNo, Long userId, OrderStatus status,
+                                     List<OrderItem> items, List<StatusChange> statusHistory,
+                                     Money totalAmount, Money paidAmount, Address address, Integer version,
+                                     LocalDateTime createdAt, LocalDateTime updatedAt, Refund refund) {
         Objects.requireNonNull(id, "持久化订单的 id 不能为空");
         Objects.requireNonNull(orderNo, "持久化订单的订单号不能为空");
         Objects.requireNonNull(userId, "持久化订单的用户ID不能为空");
@@ -114,6 +126,20 @@ public class Order {
                     + totalAmount + " 与订单项小计之和 " + recalculated + " 不一致");
         }
         assertHistoryChain(status, statusHistory);
+        boolean refundState = status == OrderStatus.REFUND_REQUESTED || status == OrderStatus.REFUNDED;
+        if (refundState != (refund != null))
+            throw new OrderDomainException("退款状态与申请身份不一致；历史退款须先对账迁移");
+        if (refund != null) {
+            if (!refund.amount().equals(paidAmount))
+                throw new OrderDomainException("退款金额与实付不一致");
+            StatusChange request = statusHistory.stream().filter(c -> c.to() == OrderStatus.REFUND_REQUESTED)
+                    .findFirst().orElseThrow(() -> new OrderDomainException("缺少退款申请历史"));
+            if (request.from() != refund.requestedFrom() || !request.reason().equals(refund.reason()))
+                throw new OrderDomainException("退款申请与履约历史不一致");
+            boolean succeeded = refund.result() != null && refund.result().outcome() == RefundResult.Outcome.SUCCEEDED;
+            if (succeeded != (status == OrderStatus.REFUNDED))
+                throw new OrderDomainException("退款结果与完成状态不一致");
+        }
 
         Order order = new Order();
         order.id = id;
@@ -124,6 +150,7 @@ public class Order {
         order.statusHistory.addAll(statusHistory);
         order.totalAmount = totalAmount;
         order.paidAmount = paidAmount;
+        order.refund = refund;
         order.address = Objects.requireNonNull(address, "持久化订单的收货地址不能为空");
         order.version = version;
         order.createdAt = createdAt;
@@ -230,6 +257,40 @@ public class Order {
         recordChange(OrderStatus.CANCELLED, reason, operatedBy, when);
     }
 
+    /** 同一有效申请只产生一次事实；申请资格和整单金额一起由订单守护。 */
+    public void requestFullRefund(String refundNo, Money amount, String reason,
+                                  String operatedBy, LocalDateTime when) {
+        Objects.requireNonNull(operatedBy, "退款操作人不能为空");
+        Objects.requireNonNull(when, "退款申请时间不能为空");
+        if (refund != null) {
+            if (refund.sameRequest(refundNo, amount, reason)) return;
+            throw new OrderDomainException("已有整单退款申请，身份或参数冲突");
+        }
+        assertTransition(OrderStatus.REFUND_REQUESTED);
+        if (!Objects.equals(paidAmount, amount))
+            throw new OrderDomainException("整单退款金额必须等于实付");
+        Refund requested = Refund.request(refundNo, amount, reason, status);
+        refund = requested;
+        recordChange(OrderStatus.REFUND_REQUESTED, reason, operatedBy, when);
+    }
+
+    /** 只有可信边界提供的确定成功结果才完成；未知或拒绝仅保存观察结果。 */
+    public void recordRefundResult(RefundResult result, String operatedBy, LocalDateTime when) {
+        Objects.requireNonNull(operatedBy, "退款操作人不能为空");
+        Objects.requireNonNull(when, "退款结果时间不能为空");
+        if (refund == null) throw new OrderDomainException("尚无退款申请");
+        Refund updated = refund.withResult(result);
+        if (status == OrderStatus.REFUNDED) return; // withResult 已核验相同成功凭证
+        assertTransition(OrderStatus.REFUNDED);
+        refund = updated;
+        updatedAt = when;
+        if (result.outcome() == RefundResult.Outcome.SUCCEEDED)
+            recordChange(OrderStatus.REFUNDED, "退款成功凭证:" + result.reference(), operatedBy, when);
+    }
+
+    /** 不可变的实体快照，调用方不能越过聚合修改退款。 */
+    public Refund refund() { return refund; }
+
     /** 对外只暴露不可变快照：聚合内部列表不逃逸。 */
     public List<OrderItem> getItems() {
         return List.copyOf(items);
@@ -309,8 +370,7 @@ public class Order {
 
     /**
      * 迁移目标状态 → 领域事件的映射。事件名全部取自第 1 讲锁定的词汇表，
-     * 退款两条边（REFUND_REQUESTED / REFUNDED）的迁移方法第 15 讲才补齐，
-     * 走到这里说明出现了尚未接入事件的状态，直接报错而不是静默不发。
+     * 第15讲补退款申请与完成事实；不存在的目标状态显式报错。
      */
     private void raiseEventFor(OrderStatus target, String reason, String operatedBy,
                                LocalDateTime when) {
@@ -320,6 +380,8 @@ public class Order {
                     .map(item -> new OrderShippedEvent.ShipmentLine(orderNo + ":SKU-" + item.skuId(),
                             "SKU-" + item.skuId(), item.quantity())).toList()));
             case RECEIVED -> events.add(OrderReceivedEvent.raise(orderNo, operatedBy, when));
+            case REFUND_REQUESTED -> events.add(RefundRequestedEvent.raise(orderNo, refund, when));
+            case REFUNDED -> events.add(RefundCompletedEvent.raise(orderNo, refund, when));
             case CANCELLED ->
                     events.add(OrderCancelledEvent.raise(orderNo, reason, operatedBy, when));
             default -> throw new OrderDomainException(

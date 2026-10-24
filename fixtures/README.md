@@ -46,3 +46,12 @@
 > 真实输入：`projects/ddd-mall/fixtures/requirements/order-creation.md`（D0）。
 
 不要在文章里复述 D0 的全部内容，只引用 + 关键摘录。
+
+
+## 第15讲整单退款增量
+
+- 需求：`requirements/full-refund.md`（教学政策已确认）。
+- 设计反例：`incidents/refund-is-not-inverse-order.md`，非真实生产事故。
+- 公开事件：`contracts/order-events.yaml` 1.2.0，增加RefundRequested/RefundCompleted。
+- 决策：`../docs/adr/ADR-06-full-refund-within-order.md`。
+- 运行：项目根目录`README-LESSON15.md`；真实MySQL加模拟结果，没有真实支付或自动库存释放。

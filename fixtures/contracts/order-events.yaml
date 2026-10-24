@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: 订单领域事件总线
-  version: 1.1.0
+  version: 1.2.0
   description: |
     订单限界上下文（mall-order，核心域）向外发布的领域事件契约。
 
@@ -34,6 +34,8 @@ channels:
           - $ref: '#/components/messages/OrderShipped'
           - $ref: '#/components/messages/OrderReceived'
           - $ref: '#/components/messages/OrderCancelled'
+          - $ref: '#/components/messages/RefundRequested'
+          - $ref: '#/components/messages/RefundCompleted'
 components:
   messages:
     OrderCreated:
@@ -138,10 +140,68 @@ components:
               operatedBy:
                 type: string
                 example: 'user:9527'
+    RefundRequested:
+      name: RefundRequested
+      title: 退款申请已登记
+      description: 第15讲订单侧整单退款事实；申请不等于到账，完成不承诺库存释放或可售。当前没有自动退款/退货订阅。
+      bindings:
+        rocketmq:
+          tag: RefundRequested
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required:
+          - refundNo
+          - amount
+          - reason
+          - requestedFrom
+          properties:
+            refundNo:
+              type: string
+              minLength: 1
+              maxLength: 64
+            amount:
+              $ref: '#/components/schemas/Money'
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 200
+            requestedFrom:
+              type: string
+              enum:
+              - PAID
+              - SHIPPED
+    RefundCompleted:
+      name: RefundCompleted
+      title: 订单已确认退款完成
+      description: 第15讲订单侧整单退款事实；申请不等于到账，完成不承诺库存释放或可售。当前没有自动退款/退货订阅。
+      bindings:
+        rocketmq:
+          tag: RefundCompleted
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required:
+          - refundNo
+          - amount
+          - reference
+          properties:
+            refundNo:
+              type: string
+              minLength: 1
+              maxLength: 64
+            amount:
+              $ref: '#/components/schemas/Money'
+            reference:
+              type: string
+              minLength: 1
+              maxLength: 128
   schemas:
     EventEnvelope:
       type: object
-      description: 五个事件共有的自描述头部，跟随每一条消息体一起传输。
+      description: 订单事件共有的自描述头部，跟随每一条消息体一起传输。
       required: [eventId, eventName, schemaVersion, orderNo, occurredOn]
       properties:
         eventId:

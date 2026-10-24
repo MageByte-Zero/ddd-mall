@@ -11,6 +11,8 @@ import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderStatus;
 import com.magebyte.ddd.mall.order.domain.StatusChange;
+import com.magebyte.ddd.mall.order.domain.Refund;
+import com.magebyte.ddd.mall.order.domain.RefundResult;
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
 import org.springframework.stereotype.Repository;
 
@@ -197,7 +199,17 @@ public class OrderRepositoryImpl implements OrderRepository {
                         orderDO.getReceiverAddress()),
                 orderDO.getVersion(),
                 orderDO.getCreatedAt(),
-                orderDO.getUpdatedAt()));
+                orderDO.getUpdatedAt(),
+                toRefund(orderDO)));
+    }
+
+    private Refund toRefund(OrderDO row) {
+        if (row.getRefundNo() == null) return null;
+        Money amount = Money.of(row.getRefundAmount());
+        RefundResult result = row.getRefundOutcome() == null ? null : new RefundResult(
+                row.getRefundNo(), amount, RefundResult.Outcome.valueOf(row.getRefundOutcome()), row.getRefundReference());
+        return Refund.reconstitute(row.getRefundNo(), amount, row.getRefundReason(),
+                OrderStatus.valueOf(row.getRefundFromStatus()), result);
     }
 
     private OrderDO toOrderDO(Order order) {
@@ -207,6 +219,17 @@ public class OrderRepositoryImpl implements OrderRepository {
         orderDO.setStatus(order.status().name());
         orderDO.setTotalAmount(order.totalAmount().amount());
         orderDO.setPaidAmount(order.paidAmount() == null ? null : order.paidAmount().amount());
+        if (order.refund() != null) {
+            Refund refund = order.refund();
+            orderDO.setRefundNo(refund.refundNo());
+            orderDO.setRefundAmount(refund.amount().amount());
+            orderDO.setRefundReason(refund.reason());
+            orderDO.setRefundFromStatus(refund.requestedFrom().name());
+            if (refund.result() != null) {
+                orderDO.setRefundOutcome(refund.result().outcome().name());
+                orderDO.setRefundReference(refund.result().reference());
+            }
+        }
         orderDO.setReceiverName(order.address().receiverName());
         orderDO.setReceiverPhone(order.address().receiverPhone());
         orderDO.setReceiverAddress(order.address().receiverAddress());

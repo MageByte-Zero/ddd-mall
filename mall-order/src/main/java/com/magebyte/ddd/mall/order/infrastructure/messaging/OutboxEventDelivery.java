@@ -3,6 +3,8 @@ package com.magebyte.ddd.mall.order.infrastructure.messaging;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
+import com.magebyte.ddd.mall.order.domain.event.RefundRequestedEvent;
+import com.magebyte.ddd.mall.order.domain.event.RefundCompletedEvent;
 import com.magebyte.ddd.mall.order.domain.event.DomainEventPublisher;
 import com.magebyte.ddd.mall.order.domain.event.OrderCancelledEvent;
 import com.magebyte.ddd.mall.order.domain.event.OrderCreatedEvent;
@@ -40,7 +42,9 @@ public class OutboxEventDelivery {
             OrderPaidEvent.NAME, OrderPaidEvent.class,
             OrderShippedEvent.NAME, OrderShippedEvent.class,
             OrderReceivedEvent.NAME, OrderReceivedEvent.class,
-            OrderCancelledEvent.NAME, OrderCancelledEvent.class);
+            OrderCancelledEvent.NAME, OrderCancelledEvent.class,
+            RefundRequestedEvent.NAME, RefundRequestedEvent.class,
+            RefundCompletedEvent.NAME, RefundCompletedEvent.class);
 
     private final OutboxEventMapper outboxMapper;
     private final DomainEventPublisher eventPublisher;

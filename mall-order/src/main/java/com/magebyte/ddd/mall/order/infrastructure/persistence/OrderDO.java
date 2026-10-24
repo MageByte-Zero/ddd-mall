@@ -26,6 +26,13 @@ public class OrderDO {
     private String status;
     private BigDecimal totalAmount;
     private BigDecimal paidAmount;
+    private String refundNo;
+    private BigDecimal refundAmount;
+    private String refundReason;
+    private String refundFromStatus;
+    private String refundOutcome;
+    private String refundReference;
+
     private String receiverName;
     private String receiverPhone;
     private String receiverAddress;
@@ -84,6 +91,24 @@ public class OrderDO {
     public void setPaidAmount(BigDecimal paidAmount) {
         this.paidAmount = paidAmount;
     }
+
+    public String getRefundNo() { return refundNo; }
+    public void setRefundNo(String value) { this.refundNo = value; }
+
+    public BigDecimal getRefundAmount() { return refundAmount; }
+    public void setRefundAmount(BigDecimal value) { this.refundAmount = value; }
+
+    public String getRefundReason() { return refundReason; }
+    public void setRefundReason(String value) { this.refundReason = value; }
+
+    public String getRefundFromStatus() { return refundFromStatus; }
+    public void setRefundFromStatus(String value) { this.refundFromStatus = value; }
+
+    public String getRefundOutcome() { return refundOutcome; }
+    public void setRefundOutcome(String value) { this.refundOutcome = value; }
+
+    public String getRefundReference() { return refundReference; }
+    public void setRefundReference(String value) { this.refundReference = value; }
 
     public String getReceiverName() {
         return receiverName;

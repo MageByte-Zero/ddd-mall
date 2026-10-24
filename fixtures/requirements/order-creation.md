@@ -11,7 +11,7 @@
 - 用户下单后，订单状态可追溯；
 - 库存与订单保持一致，不超卖；
 - 支付回调与订单状态机联动；
-- 退款按状态机回滚库存。
+- 退款按确认结果记账；退款、退货与恢复可售分别判断，详见 `full-refund.md`。
 
 ## 2. 范围
 
@@ -25,8 +25,7 @@
 PENDING_PAY → PAID → SHIPPED → RECEIVED
      ↓
 CANCELLED
-     ↓
-REFUND_REQUESTED → REFUNDED
+PAID / SHIPPED → REFUND_REQUESTED → REFUNDED
 ```
 
 合法迁移：
@@ -62,7 +61,7 @@ REFUND_REQUESTED → REFUNDED
 | 支付订单 | 第三方支付回调 | PENDING_PAY → PAID，事件 OrderPaid |
 | 取消订单 | 用户 / 超时 | PENDING_PAY → CANCELLED，库存释放 |
 | 申请退款 | 用户 | PAID → REFUND_REQUESTED |
-| 退款完成 | 支付 BC | REFUND_REQUESTED → REFUNDED，库存回滚 |
+| 退款完成 | 支付 BC | REFUND_REQUESTED → REFUNDED；不自动宣称库存处理完成 |
 
 ## 6. 验收条件
 
@@ -103,3 +102,10 @@ REFUND_REQUESTED → REFUNDED
 - 中继每行独立本地事务，在 Seata 代理数据源内当前 FOR UPDATE + @GlobalLock 检查 AT 全局锁；一阶段可见不构成可发布依据。先发后标 SENT，SEND_OK 才标记，失败持久化退避、预算耗尽 FAILED 需处理。
 - 消费提交后回调成功，失败传播以触发重试。重试耗尽进入消费组 DLQ，修复原因后保持事实身份受控重放；不篡改已提交事实解除冲突。
 - 本地单 Broker/异步刷盘实验只验证进程失败窗口，未证明掉电、毁盘、集群切换和普通消息生命周期有序。并发数据库死锁作为整笔消费失败重试，不能吞掉。
+
+
+## 第15讲整单退款政策（2026-10-21）
+
+教学政策与验收表以 `fixtures/requirements/full-refund.md` 为准。PAID/SHIPPED均可申请，单笔有效整单申请，按实付金额匹配结果；未知或拒绝不记完成。申请前履约状态与申请身份必须保留。Refund实体由Order聚合管理，共用订单版本守护退款与发货竞争；RefundResult与Money为值对象。
+
+未发货可另行安排释放预占，已发货退款不自动释放、补货或抹除原发货事实。第15讲没有真实资金渠道、自动库存释放或完整跨服务恢复。上述历史验收目标不代表本讲已经重新运行全部性能/回调/Seata路径。失败反例见 `fixtures/incidents/refund-is-not-inverse-order.md`。

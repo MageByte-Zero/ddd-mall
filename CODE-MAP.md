@@ -75,8 +75,8 @@
   - `List<StatusChange> statusHistory()` (unmodifiable) — L7
   - `List<DomainEvent> pullEvents()` — L8：取走聚合自上次保存以来产生的事件（不可变快照）并清空；reconstitute 重组的聚合事件列表永远为空（重组是还原历史，不产新事实）
   - `static Order reconstitute(...)` — L7 签名加 `List<StatusChange> statusHistory`（插在 items 之后），重组即校验历史链（非空/首节 from 为空/首尾相接/每步合法/末节 to==当前状态）
-  - 事件挂载点：`create()` 抛 OrderCreatedEvent；私有 `recordChange()` 迁移成功后经 `raiseEventFor(target, reason, operatedBy, when)` 抛对应事件（非法迁移在 assertTransition 即抛出，不产事件）；退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位、迁移方法待 L15，raiseEventFor 对未接入状态显式抛错
-  - 退款两条边（REFUND_REQUESTED/REFUNDED）迁移表已在 L6 就位，迁移方法待 L15
+  - 事件挂载点：`create()` 抛 OrderCreatedEvent；私有 `recordChange()` 迁移成功后经 `raiseEventFor(target, reason, operatedBy, when)` 抛对应事件（非法迁移在 assertTransition 即抛出，不产事件）；退款两条边在第15讲补齐领域动作与事件，具体见文末第15讲增量
+  - 退款两条边在第15讲补齐，申请与成功结果分别迁移
 
 #### domain/（跨 BC 端口，L10/L11）
 - `InventoryDeductionPort`（纯 Java 端口接口）— L10：订单对"库存扣减"能力的出口抽象；`void deduct(reservationNo,skuCode,quantity)`（L13 新重载；旧二参数签名 ⚠ deprecated at L-13）；实现住基础设施层（依赖倒置），领域层不知道 Feign/HTTP。第 17/19 讲防腐层在适配器一侧加厚，本端口不动
@@ -310,3 +310,15 @@
 - 接口：InventoryShipmentConsumer处于interfaces.messaging；严格v2字段、数量整数、已知字段标准化SHA-256指纹；异常传播；默认topic order-events/group inventory-shipment-v2，只有OrderShipped tag。库存新增rocketmq-spring 2.3.1依赖与nameserver配置，业务生产重试预算16，Native故障夹具专用组预算2。
 - 验证：SendStatus单测、ShipmentReliabilityTest并发/冲突/合法B/多SKU原子回滚/严格协议、ShipmentOutboxTest真实发货用例v2事实；ReliabilityProcess/OutboxProcess独立进程故障。实际结果以当前第14讲evidence为准，不把测试源存在当通过。
 - 调整：一个最小库存业务订阅从L25前移L14（用户批准）；L25保留多订阅、路由和Outbox演进。未实现跨事件有序、自动DLQ治理、去重TTL或远程副作用原子化。
+
+
+## 第15讲增量（2026-10-21实现；2026-10-24发布lesson-15）
+
+- 需求：`fixtures/requirements/full-refund.md`；设计反例 `fixtures/incidents/refund-is-not-inverse-order.md`；决策ADR-06。
+- 订单聚合：`requestFullRefund(refundNo,amount,reason,operatedBy,when)`、`recordRefundResult(result,operatedBy,when)`、`refund()`；新增带末参Refund的reconstitute重载，保留旧签名供未退款订单使用。退款状态没有申请身份时拒绝猜测；新实现重组校验金额、申请来源历史、结果与终态。
+- `Refund`：聚合内实体，无独立仓储；不可变快照，外部不能越过Order改结果。保存refundNo/Money/reason/requestedFrom/result。`RefundResult`值对象，包含refundNo/amount/outcome/reference；Outcome=UNKNOWN/REJECTED/SUCCEEDED。
+- 应用层：FullRefundCommand；RefundApplicationService.requestFullRefund(command)/recordResult(orderNo,result,operatedBy)，均仅订单本地事务。无生产HTTP入口、真实渠道、自动退款发起、库存释放或补货。
+- 事件：RefundRequestedEvent（申请号、金额、原因、申请前状态）、RefundCompletedEvent（申请号、金额、凭证），wire names沿用既有词汇；OutboxEventDelivery类型映射新增二者。公开契约order-events.yaml 1.2.0。
+- Schema：订单Flyway V2__full_refund.sql增加六个可空退款列与uk_refund_no，非退款历史行保持NULL。旧V1未改；与其他订单修改共享原有@Version。
+- 测试：FullRefundTest（领域行为）、FullRefundPersistenceTest（真实MySQL+模拟结果+记录式发送边界）；实际运行结果以第15讲evidence为准，不把源码存在当成通过。
+- lesson-14与既有发货事实保持原样；本讲没有完整支付渠道或跨服务恢复保证。

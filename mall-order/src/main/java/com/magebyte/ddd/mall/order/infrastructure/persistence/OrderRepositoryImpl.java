@@ -14,6 +14,7 @@ import com.magebyte.ddd.mall.order.domain.StatusChange;
 import com.magebyte.ddd.mall.order.domain.Refund;
 import com.magebyte.ddd.mall.order.domain.RefundResult;
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
@@ -51,6 +52,9 @@ public class OrderRepositoryImpl implements OrderRepository {
     private final OrderStatusHistoryMapper statusHistoryMapper;
     private final OutboxEventMapper outboxEventMapper;
     private final ObjectMapper objectMapper;
+
+    @Value("${ddd.payment.new-orders-enabled:false}")
+    private boolean paymentManagedForNewOrders;
 
     public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
                                OrderStatusHistoryMapper statusHistoryMapper,
@@ -117,6 +121,7 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     private Order insert(Order order) {
         OrderDO orderDO = toOrderDO(order);
+        orderDO.setPaymentManaged(paymentManagedForNewOrders);
         orderMapper.insert(orderDO);
         for (OrderItem item : order.getItems()) {
             orderItemMapper.insert(toItemDO(orderDO.getId(), item));

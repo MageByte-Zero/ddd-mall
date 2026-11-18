@@ -11,6 +11,15 @@
     <description>支撑域：支付 BC</description>
     <dependencies>
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+            <version>${rocketmq-spring.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.magebyte.ddd</groupId>
             <artifactId>mall-commons</artifactId>
             <version>${project.version}</version>

@@ -1,0 +1,42 @@
+asyncapi: '2.6.0'
+info:
+  title: Payment facts
+  version: '1.0.0'
+  description: Payment owns confirmation. Order owns acceptance and publishes OrderPaid independently.
+channels:
+  payment-events:
+    subscribe:
+      message:
+        name: PaymentSucceeded
+        headers:
+          type: object
+          properties:
+            KEYS:
+              type: string
+              description: The original eventId on every delivery.
+        payload:
+          type: object
+          required: [payload, signature]
+          properties:
+            payload:
+              type: string
+              description: UTF-8 JSON of PaymentSucceededFact. The signature covers these exact bytes.
+            signature:
+              type: string
+              pattern: '^[0-9a-f]{64}$'
+              description: HMAC-SHA256 using the teaching handoff secret.
+        description: RocketMQ tag PaymentSucceeded. The original payload and eventId are retained on redelivery.
+components:
+  schemas:
+    PaymentSucceededFact:
+      type: object
+      required: [eventId, eventName, schemaVersion, orderNo, paymentNo, amountMinor, currency, confirmedAt]
+      properties:
+        eventId: {type: string, maxLength: 48}
+        eventName: {type: string, enum: [PaymentSucceeded]}
+        schemaVersion: {type: integer, enum: [1]}
+        orderNo: {type: string, maxLength: 64}
+        paymentNo: {type: string, maxLength: 48}
+        amountMinor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, enum: [CNY]}
+        confirmedAt: {type: string, format: date-time}

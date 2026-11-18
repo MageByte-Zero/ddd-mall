@@ -239,12 +239,10 @@
 - `V3__inventory_idempotency.sql` — L13：预占单、动作回执两表及日志身份；唯一约束与旧余额边界见下方 L13 增量。
 - Flyway 在 L10 提前启用（原计划 L12；因 AT 需要 undo_log 与最小库存表）
 
-### mall-payment (支撑域) — 启动类 L4 / 四层包 L5 / 领域代码待 L17
+### mall-payment (支撑域) — 启动类 L4 / 四层包 L5 / 支付确认 L17
 
-(待 L17 引入 Payment 聚合根、PaymentCallbackService)
-
-### Schema
-- (空，待 L17)
+- 支付单 Payment、PaymentAmount、PaymentCallbackService、支付 Outbox 与模拟渠道回调。订单侧订阅已确认支付事实，继续拥有订单 OrderPaid。
+- 支付 Schema V1 含 t_payment、t_payment_outbox、t_payment_callback_review。契约、恢复及测试索引见本文件第 17 讲增量。
 
 ### mall-product (通用域) — 启动类 L4 / 四层包 L5 / 领域代码待 L18
 
@@ -322,3 +320,10 @@
 - Schema：订单Flyway V2__full_refund.sql增加六个可空退款列与uk_refund_no，非退款历史行保持NULL。旧V1未改；与其他订单修改共享原有@Version。
 - 测试：FullRefundTest（领域行为）、FullRefundPersistenceTest（真实MySQL+模拟结果+记录式发送边界）；实际运行结果以第15讲evidence为准，不把源码存在当成通过。
 - lesson-14与既有发货事实保持原样；本讲没有完整支付渠道或跨服务恢复保证。
+
+## 第 17 讲 · 支付确认与订单交接
+
+- 支付领域新增 Payment、PaymentAmount、支付仓储及其 JDBC 实现。模拟回调先校验来源和报文，再由 PaymentCallbackService 编排聚合判断、确认保存和同事务 Outbox。币种 CNY，整数分，一单一支付单，渠道流水由唯一约束保护。
+- 支付 schema 启用 Flyway，V1 创建支付单、Outbox 和回调核查记录。中继使用支付 topic 的 PaymentSucceeded tag，发送确认后置 SENT，超限记录 FAILED。查询、原事实重投及回调凭据见 fixtures/contracts/payment-api.yaml。
+- 订单迁移 V3 增加新订单收款路由、支付处理回执和 Inbox。新路径通过 AcceptPaymentService 的受全局锁保护当前读，重用 Order.markPaid 与订单 Outbox。支付事实和订单的 OrderPaid 是两个契约。旧入口在受保护读取后仅受理存量教学订单。
+- 过程测试 fixtures/verification/payment-loop.py，全局窗口测试 PaymentAtWindowTest，提交后 Broker 重投测试 PaymentBrokerRecoveryTest。运行证据见专栏第 17 讲核验记录。

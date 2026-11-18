@@ -54,7 +54,7 @@ init_rocketmq_topics() {
     return
   fi
   # broker 启动后需要十几秒才向 namesrv 注册，mqadmin 建 topic 前要等它注册成功
-  local topics=("order-events")
+  local topics=("order-events" "payment-events")
   for t in "${topics[@]}"; do
     local ok_flag=0
     for _ in $(seq 1 30); do

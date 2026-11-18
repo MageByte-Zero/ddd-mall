@@ -1,0 +1,106 @@
+openapi: '3.0.3'
+info:
+  title: Lesson 17 simulated payment handoff
+  version: '1.0.0'
+  description: The two credentials are injected at runtime into a closed teaching environment.
+security:
+  - handoffToken: []
+paths:
+  /api/payments:
+    post:
+      summary: Create or return the payment for an eligible order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderNo]
+              properties:
+                orderNo: {type: string, maxLength: 64}
+      responses:
+        '200': {description: The original payment identity and payment status}
+        '401': {description: Missing or invalid teaching credential}
+        '404': {description: Order does not exist}
+        '422': {description: No new payment is permitted for the order}
+        '503': {description: Order eligibility cannot be confirmed yet}
+  /api/payments/{paymentNo}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentNo'
+    get:
+      summary: Read payment confirmation and delivery progress
+      responses:
+        '200': {description: PENDING or SUCCEEDED and the current Outbox progress, if any}
+        '404': {description: Payment does not exist}
+  /api/payments/callbacks/simulated:
+    post:
+      summary: Observe an authenticated result from the simulated channel
+      security:
+        - callbackToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentNo, orderNo, amountMinor, currency, result]
+              properties:
+                paymentNo: {type: string, maxLength: 48}
+                orderNo: {type: string, maxLength: 64}
+                channelTxnNo: {type: string, maxLength: 80, nullable: true}
+                amountMinor: {type: integer, format: int64}
+                currency: {type: string, maxLength: 8}
+                result:
+                  type: string
+                  maxLength: 32
+                  description: SUCCESS confirms a matching result with a transaction number; UNKNOWN leaves status unchanged.
+      responses:
+        '200': {description: CONFIRMED, ALREADY_CONFIRMED, or NO_NEW_CONFIRMATION}
+        '400': {description: Malformed callback}
+        '401': {description: Wrong simulated source credential}
+        '422': {description: Authenticated result requires review}
+  /api/payments/{paymentNo}/redelivery:
+    parameters:
+      - $ref: '#/components/parameters/PaymentNo'
+    post:
+      summary: Requeue the original persisted fact after resolving a handoff failure
+      responses:
+        '202': {description: The stored event is eligible for redelivery}
+        '404': {description: No confirmed event to redeliver}
+  /internal/payment-checkout/{orderNo}:
+    parameters:
+      - in: path
+        name: orderNo
+        required: true
+        schema: {type: string}
+    get:
+      summary: Resolve a committed and eligible order snapshot
+      responses:
+        '200': {description: Committed orderNo, amountMinor and currency}
+        '404': {description: Order does not exist}
+        '422': {description: Payment is not permitted under the current order policy}
+        '500': {description: AT global lock prevents the order decision during a phase-one window}
+  /internal/payment-outcomes/{paymentNo}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentNo'
+    get:
+      summary: Look up the independent order decision
+      responses:
+        '200': {description: Durable ACCEPTED or review or rejection outcome}
+        '404': {description: No order decision has been recorded for the payment}
+components:
+  parameters:
+    PaymentNo:
+      name: paymentNo
+      in: path
+      required: true
+      schema: {type: string}
+  securitySchemes:
+    handoffToken:
+      type: apiKey
+      in: header
+      name: X-Payment-Handoff-Token
+    callbackToken:
+      type: apiKey
+      in: header
+      name: X-Simulated-Callback-Token

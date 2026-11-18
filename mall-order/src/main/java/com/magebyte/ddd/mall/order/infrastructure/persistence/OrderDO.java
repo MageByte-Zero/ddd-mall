@@ -26,6 +26,7 @@ public class OrderDO {
     private String status;
     private BigDecimal totalAmount;
     private BigDecimal paidAmount;
+    private Boolean paymentManaged;
     private String refundNo;
     private BigDecimal refundAmount;
     private String refundReason;
@@ -91,6 +92,9 @@ public class OrderDO {
     public void setPaidAmount(BigDecimal paidAmount) {
         this.paidAmount = paidAmount;
     }
+
+    public Boolean getPaymentManaged() { return paymentManaged; }
+    public void setPaymentManaged(Boolean value) { this.paymentManaged = value; }
 
     public String getRefundNo() { return refundNo; }
     public void setRefundNo(String value) { this.refundNo = value; }

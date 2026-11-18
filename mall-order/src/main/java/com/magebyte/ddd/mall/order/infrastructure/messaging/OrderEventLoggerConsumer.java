@@ -5,6 +5,7 @@ import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -16,9 +17,10 @@ import java.time.Instant;
  *
  * <p>这是本讲交付的"Consumer 端最小示例"——证明领域事件真的从聚合根
  * 一路到达了订阅方。库存预占释放、支付状态联动等真实业务处理，
- * 由后续讲次各限界上下文自己的消费者承担，本类届时退役。
+ * 由各限界上下文自己的消费者承担，本类继续用于教学观察。
  */
 @Component
+@ConditionalOnProperty(name = "ddd.order.event-logger-enabled", matchIfMissing = true, havingValue = "true")
 @RocketMQMessageListener(
         topic = OrderEventPublisher.TOPIC,
         consumerGroup = "mall-order-event-logger",

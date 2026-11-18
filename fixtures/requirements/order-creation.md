@@ -109,3 +109,7 @@ PAID / SHIPPED → REFUND_REQUESTED → REFUNDED
 教学政策与验收表以 `fixtures/requirements/full-refund.md` 为准。PAID/SHIPPED均可申请，单笔有效整单申请，按实付金额匹配结果；未知或拒绝不记完成。申请前履约状态与申请身份必须保留。Refund实体由Order聚合管理，共用订单版本守护退款与发货竞争；RefundResult与Money为值对象。
 
 未发货可另行安排释放预占，已发货退款不自动释放、补货或抹除原发货事实。第15讲没有真实资金渠道、自动库存释放或完整跨服务恢复。上述历史验收目标不代表本讲已经重新运行全部性能/回调/Seata路径。失败反例见 `fixtures/incidents/refund-is-not-inverse-order.md`。
+
+## 第 17 讲支付确认
+
+独立支付、结果交接、迁移及故障验收见 [支付需求](payment.md)。订单仍仅接受合法状态下匹配全额的付款，支付确认后继续预占库存。

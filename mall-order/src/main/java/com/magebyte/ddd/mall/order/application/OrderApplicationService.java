@@ -9,7 +9,9 @@ import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderNotFoundException;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
+import com.magebyte.ddd.mall.order.domain.OrderPaymentJournal;
 import org.apache.seata.core.context.RootContext;
+import org.apache.seata.spring.annotation.GlobalLock;
 import org.apache.seata.spring.annotation.GlobalTransactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,7 @@ public class OrderApplicationService {
     private final OrderRepository orderRepository;
     private final InventoryDeductionPort inventoryDeduction;
     private final InventoryReleasePort inventoryRelease;
+    private final OrderPaymentJournal paymentStore;
 
     /**
      * 教学故障注入的停留秒数：分支一阶段提交后故意停留，
@@ -58,10 +61,12 @@ public class OrderApplicationService {
 
     public OrderApplicationService(OrderRepository orderRepository,
                                    InventoryDeductionPort inventoryDeduction,
-                                   InventoryReleasePort inventoryRelease) {
+                                   InventoryReleasePort inventoryRelease,
+                                   OrderPaymentJournal paymentStore) {
         this.orderRepository = orderRepository;
         this.inventoryDeduction = inventoryDeduction;
         this.inventoryRelease = inventoryRelease;
+        this.paymentStore = paymentStore;
     }
 
     /**
@@ -98,7 +103,8 @@ public class OrderApplicationService {
     }
 
     /**
-     * 支付订单：第三方支付成功后的状态推进（PENDING_PAY → PAID）。
+     * 存量教学入口：订单内登记实付金额（PENDING_PAY → PAID）。
+     * 新路径在 AcceptPaymentService 消费支付确认事实后执行相同领域迁移。
      *
      * <p>只动订单自己的库，所以是普通本地事务，不需要 AT：
      * 这里没有第二个资源参与者，开全局事务纯粹是浪费一轮 TC 通信和一张 undo_log。
@@ -107,15 +113,17 @@ public class OrderApplicationService {
      *
      * <p>幂等由两层兜底：同一个请求顺序重放时，状态机直接拒绝第二次
      * （PAID 不能再迁到 PAID，抛 {@link OrderDomainException}）；
-     * 两个请求并发进来时，都读到 PENDING_PAY 都能过状态机，
-     * 但 {@code @Version} 乐观锁只允许一个提交成功，另一个拿到
-     * "订单已被并发修改"。第 13 讲只落库存动作幂等；支付回调契约留给第 17 讲。
+     * 订单在确认前持有当前行锁，状态判断与写入在同一事务内，仓储仍校验版本。
      *
      * @param command 支付命令
      * @return 支付后的订单详情
      */
+    @GlobalLock(lockRetryInterval = 100, lockRetryTimes = 3)
     @Transactional
     public OrderDetail payOrder(PayOrderCommand command) {
+        if (paymentStore.lock(command.orderNo()).managed()) {
+            throw new OrderDomainException("该订单只能接受支付系统确认的收款");
+        }
         Order order = findOrder(command.orderNo());
         order.markPaid(Money.of(command.paidAmount()), command.operatedBy(),
                 LocalDateTime.now());

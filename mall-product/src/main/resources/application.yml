@@ -23,8 +23,8 @@ spring:
         import-check:
           enabled: false
   flyway:
-    # 商品 schema 在第 18 讲（商品 BC 跑通战术设计）才建表；此前 Flyway 保持关闭
-    enabled: false
+    enabled: true
+    locations: classpath:db/migration
 
 mybatis-plus:
   configuration:

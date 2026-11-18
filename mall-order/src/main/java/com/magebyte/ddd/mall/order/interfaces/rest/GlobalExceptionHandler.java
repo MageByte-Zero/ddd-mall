@@ -1,6 +1,7 @@
 package com.magebyte.ddd.mall.order.interfaces.rest;
 
 import com.magebyte.ddd.mall.commons.response.Result;
+import com.magebyte.ddd.mall.order.domain.CatalogUnavailableException;
 import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import com.magebyte.ddd.mall.order.domain.OrderNotFoundException;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,12 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
     public Result<Void> handleDomainException(OrderDomainException e) {
         return Result.error(HttpStatus.UNPROCESSABLE_ENTITY.value(), e.getMessage());
+    }
+
+    @ExceptionHandler(CatalogUnavailableException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Void> handleCatalogUnavailable(CatalogUnavailableException e) {
+        return Result.error(HttpStatus.SERVICE_UNAVAILABLE.value(), e.getMessage());
     }
 
     /**

@@ -244,12 +244,10 @@
 - 支付单 Payment、PaymentAmount、PaymentCallbackService、支付 Outbox 与模拟渠道回调。订单侧订阅已确认支付事实，继续拥有订单 OrderPaid。
 - 支付 Schema V1 含 t_payment、t_payment_outbox、t_payment_callback_review。契约、恢复及测试索引见本文件第 17 讲增量。
 
-### mall-product (通用域) — 启动类 L4 / 四层包 L5 / 领域代码待 L18
+### mall-product (通用域) — 启动类 L4 / 四层包 L5 / 基础目录 L18
 
-(待 L18 引入 Product 聚合根、ProductQueryService)
-
-### Schema
-- (空，待 L18)
+- ProductCatalogService 通过 JdbcClient 创建、编辑和查询目录，ProductCatalogController 暴露 POST /api/catalog/skus 与 PUT/GET /api/catalog/skus/{skuId}。
+- Flyway V1 创建 t_catalog_sku，一商品一 SKU，稳定身份受主键与唯一约束保护，名称、单价、启用状态同一行提交。
 
 ## 跨 BC 调用矩阵
 
@@ -327,3 +325,10 @@
 - 支付 schema 启用 Flyway，V1 创建支付单、Outbox 和回调核查记录。中继使用支付 topic 的 PaymentSucceeded tag，发送确认后置 SENT，超限记录 FAILED。查询、原事实重投及回调凭据见 fixtures/contracts/payment-api.yaml。
 - 订单迁移 V3 增加新订单收款路由、支付处理回执和 Inbox。新路径通过 AcceptPaymentService 的受全局锁保护当前读，重用 Order.markPaid 与订单 Outbox。支付事实和订单的 OrderPaid 是两个契约。旧入口在受保护读取后仅受理存量教学订单。
 - 过程测试 fixtures/verification/payment-loop.py，全局窗口测试 PaymentAtWindowTest，提交后 Broker 重投测试 PaymentBrokerRecoveryTest。运行证据见专栏第 17 讲核验记录。
+
+
+## 第 18 讲 · 商品目录与成交快照
+
+- 订单 POST /api/orders 由 CatalogOrderService 先经 CatalogLookup 和 Feign 读取已提交的一份目录快照，目录业务拒绝为 422，上游不可用为 503。携带旧单价时只作为比价条件。
+- 进入原 OrderApplicationService.createOrder 后，OrderItem 保存目录取到的名称和单价，并沿原 AT 路径处理库存。订单和支付读取既有成交快照，订单 schema 无新增迁移。
+- 契约 fixtures/contracts/order-to-catalog.yaml，真实进程夹具 fixtures/verification/catalog-order.py，第 17 讲夹具以其发布快照复跑。

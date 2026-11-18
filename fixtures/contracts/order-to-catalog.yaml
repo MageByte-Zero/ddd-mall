@@ -1,0 +1,74 @@
+openapi: '3.0.3'
+info:
+  title: Basic product catalogue
+  version: '1.0.0'
+  description: The order module reads an entire committed SKU snapshot once before entering its order transaction. All prices are CNY yuan.
+paths:
+  /api/catalog/skus:
+    post:
+      summary: Create a catalogue entry for a stable product ID and SKU ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogSku'
+      responses:
+        '201':
+          description: Created and committed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSku'
+        '409': {description: Product identity or SKU identity already exists}
+        '422': {description: Invalid catalogue attributes}
+  /api/catalog/skus/{skuId}:
+    parameters:
+      - in: path
+        name: skuId
+        required: true
+        schema: {type: integer, format: int64, minimum: 1}
+    get:
+      summary: Read one committed snapshot including its enabled flag
+      responses:
+        '200':
+          description: The catalogue snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSku'
+        '404': {description: Unknown SKU}
+    put:
+      summary: Replace the mutable catalogue fields in one database write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogFields'
+      responses:
+        '200':
+          description: Updated and committed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSku'
+        '404': {description: Unknown SKU}
+        '422': {description: Invalid catalogue attributes}
+components:
+  schemas:
+    CatalogFields:
+      type: object
+      required: [name, unitPrice, enabled]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        unitPrice: {type: number, minimum: 0.01, maximum: 9999999999.99, multipleOf: 0.01}
+        enabled: {type: boolean}
+    CatalogSku:
+      allOf:
+        - $ref: '#/components/schemas/CatalogFields'
+        - type: object
+          required: [skuId, productId]
+          properties:
+            skuId: {type: integer, format: int64, minimum: 1}
+            productId: {type: integer, format: int64, minimum: 1}

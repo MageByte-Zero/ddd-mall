@@ -2,6 +2,7 @@ package com.magebyte.ddd.mall.order.interfaces.rest;
 
 import com.magebyte.ddd.mall.commons.response.Result;
 import com.magebyte.ddd.mall.order.application.CancelOrderCommand;
+import com.magebyte.ddd.mall.order.application.CatalogOrderService;
 import com.magebyte.ddd.mall.order.application.CreateOrderCommand;
 import com.magebyte.ddd.mall.order.application.OrderApplicationService;
 import com.magebyte.ddd.mall.order.application.OrderDetail;
@@ -35,17 +36,20 @@ public class OrderController {
 
     private final OrderApplicationService orderApplicationService;
 
-    public OrderController(OrderApplicationService orderApplicationService) {
+    private final CatalogOrderService catalogOrders;
+
+    public OrderController(OrderApplicationService orderApplicationService, CatalogOrderService catalogOrders) {
         this.orderApplicationService = orderApplicationService;
+        this.catalogOrders = catalogOrders;
     }
 
     /**
-     * 创建订单（全局事务入口）。成功返回 201；库存不足等业务失败返回 422。
+     * 先取得目录快照，再调用现有全局事务。成功返回 201，目录业务拒绝和库存不足返回 422。
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Result<OrderDetailResponse> create(@Valid @RequestBody CreateOrderRequest request) {
-        OrderDetail detail = orderApplicationService.createOrder(new CreateOrderCommand(
+        OrderDetail detail = catalogOrders.create(new CreateOrderCommand(
                 request.userId(),
                 request.productId(),
                 request.skuId(),

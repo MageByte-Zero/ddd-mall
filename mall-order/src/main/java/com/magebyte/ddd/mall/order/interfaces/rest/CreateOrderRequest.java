@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -14,21 +15,21 @@ import jakarta.validation.constraints.Size;
  * 请求格式（这里）与领域规则（{@code Order} 聚合里）分开——
  * "手机号格式不对"是协议问题，"订单已支付不能取消"是业务问题，
  * 前者 400，后者 422。
+ * 商品 ID、名称和单价为兼容旧调用而保留。实际下单快照由商品目录提供。
  */
 public record CreateOrderRequest(
         @NotNull(message = "userId 不能为空")
         Long userId,
-        @NotNull(message = "productId 不能为空")
+        @Positive(message = "productId 必须为正整数")
         Long productId,
         @NotNull(message = "skuId 不能为空")
+        @Positive(message = "skuId 必须为正整数")
         Long skuId,
-        @NotBlank(message = "productName 不能为空")
         @Size(max = 128, message = "productName 不能超过 128 字符")
         String productName,
         @NotNull(message = "quantity 不能为空")
         @Min(value = 1, message = "购买数量必须 ≥ 1")
         Integer quantity,
-        @NotBlank(message = "unitPrice 不能为空")
         @Pattern(regexp = "^\\d{1,10}(\\.\\d{1,2})?$",
                 message = "unitPrice 必须是金额，最多两位小数")
         String unitPrice,

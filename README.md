@@ -194,6 +194,31 @@ mvn -B -pl mall-order -am -Dsurefire.failIfNoSpecifiedTests=false \
 
 `seedV4` 先复现 ¥50 请求被旧整单入口拒绝，再写下两笔旧整单状态。看到 `L21_V5` 时，V5 已重读旧数据，并能通过原入口完成此前在途的整单申请。实际升级先停止旧版本写入，再运行迁移并启用新版。部分退款开始登记后，如需停收新申请，保留新版读取和回记在途申请的能力。[部分退款需求](fixtures/requirements/partial-refund.md) · [额度一致性决策](docs/adr/ADR-12-order-owned-refund-capacity.md)
 
+### 第 22 讲已付款订单列表
+
+可信内部调用用 `GET /internal/order-list?userId=22001&limit=20`。翻页把返回的 `nextBeforeId` 原样作为 `beforeId`，空值表示末页。列表每单预览前三行，`hasMoreLines` 表示可打开现有详情查看其余明细。用户筛选由查询实施，调用授权由内部接入方处理。
+
+`inventoryObservedAt` 是库存批查成功时库存侧的观察时间。已发货但尚未确认出库时，原库存记录可能显示 `RESERVED`。找不到记录或调用超时会分别显示 `NOT_FOUND` 或 `UNAVAILABLE`。其余显示口径见列表需求和 OpenAPI 契约。
+
+从仓库根目录运行。需 JDK 21、Maven、Python 3 及现有 DDD Compose 中间件。已有容器可以直接复用，过程夹具使用端口 29081–29084、独立数据库和消息主题。
+
+```bash
+docker compose -p ddd -f docker-compose/docker-compose.yml up -d mysql nacos rocketmq-namesrv rocketmq-broker seata-server
+mvn -B -DskipTests package
+python3 fixtures/verification/order-list.py
+```
+
+输出检查 `purchaseAndPayment`、`shipment`、`timeoutRecovery` 与 `missingReferences`。夹具通过暂停并恢复既有中继得到可控的先后窗口，库存超时通过只代理批查请求的本地 HTTP 连接验证。
+
+退款及分页用 MySQL 上的 Java 集成测试复验。按第 21 讲的步骤另建练习库、导入订单 V1，并切换数据源环境变量后执行：
+
+```bash
+mvn -B -pl mall-order -am -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dtest=OrderListPersistenceTest,ArchitectureTest test
+```
+
+这个测试覆盖两行多退款汇总、旧整单状态、同创建时间的稳定翻页、预览截断及 SQL 调用数。[业务口径](fixtures/requirements/order-list.md) · [查询契约](fixtures/contracts/order-list.yaml)
+
 ## 脚本一览
 
 | 脚本 | 职责 |

@@ -20,6 +20,9 @@ spring:
           catalogClient:
             connectTimeout: 1500
             readTimeout: 2000
+          inventoryStatusClient:
+            connectTimeout: 400
+            readTimeout: 800
     nacos:
       discovery:
         server-addr: localhost:8848

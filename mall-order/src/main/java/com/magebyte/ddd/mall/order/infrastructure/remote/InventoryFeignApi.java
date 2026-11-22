@@ -2,8 +2,11 @@ package com.magebyte.ddd.mall.order.infrastructure.remote;
 
 import com.magebyte.ddd.mall.commons.response.Result;
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 
 /**
  * 库存 BC 的 Feign 客户端：只描述 HTTP 协议（服务名、路径、出入参），
@@ -27,4 +30,9 @@ public interface InventoryFeignApi {
     @PostMapping(value = "/api/inventories/releases",
             consumes = "application/json", produces = "application/json")
     Result<Void> release(@RequestBody InventoryReleaseRequest request);
+
+    @GetMapping("/api/inventories/reservations/{reservationNo}")
+    Result<Void> requireReserved(@PathVariable("reservationNo") String reservationNo,
+                                 @RequestParam("skuCode") String skuCode,
+                                 @RequestParam("quantity") int quantity);
 }

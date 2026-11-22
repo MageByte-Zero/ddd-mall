@@ -146,6 +146,12 @@ public class Order {
         order.orderNo = orderNo;
         order.userId = userId;
         order.status = status;
+        if (items.stream().map(OrderItem::lineId).distinct().count() != items.size()) {
+            throw new OrderDomainException("订单行身份重复");
+        }
+        for (OrderItem item : items) {
+            order.requireLineOwnership(item);
+        }
         order.items.addAll(items);
         order.statusHistory.addAll(statusHistory);
         order.totalAmount = totalAmount;
@@ -196,8 +202,28 @@ public class Order {
     public void addItem(OrderItem item) {
         Objects.requireNonNull(item, "订单项不能为空");
         assertItemsModifiable();
+        requireLineOwnership(item);
+        if (items.contains(item)) {
+            throw new OrderDomainException("订单行身份重复");
+        }
+        Money nextTotal = totalAmount.plus(item.subtotal());
+        if (nextTotal.amount().precision() > 18) {
+            throw new OrderDomainException("订单金额超出允许范围");
+        }
         items.add(item);
-        totalAmount = totalAmount.plus(item.subtotal());
+        totalAmount = nextTotal;
+    }
+
+    public void addLine(Long productId, Long skuId, String productName,
+                        int quantity, Money unitPrice, String purchaseRequestNo) {
+        addItem(OrderItem.place(orderNo, productId, skuId, productName, quantity, unitPrice, purchaseRequestNo));
+    }
+
+    private void requireLineOwnership(OrderItem item) {
+        if (!item.usesLegacyReservation()
+                && !item.reservationNo().equals(orderNo + ":LINE:" + item.lineId())) {
+            throw new OrderDomainException("订单行预占引用不属于本订单");
+        }
     }
 
     /**
@@ -229,9 +255,8 @@ public class Order {
     public void markShipped(String operatedBy, LocalDateTime when) {
         Objects.requireNonNull(operatedBy, "发货操作人不能为空");
         Objects.requireNonNull(when, "发货时间不能为空");
-        if (items.stream().map(OrderItem::skuId).distinct().count() != items.size()) {
-            throw new OrderDomainException("重复 SKU 明细尚未统一预占身份，不能发货");
-        }
+        assertTransition(OrderStatus.SHIPPED);
+        requireFulfillmentReferences();
         recordChange(OrderStatus.SHIPPED, "商家发货", operatedBy, when);
     }
 
@@ -254,7 +279,17 @@ public class Order {
         Objects.requireNonNull(reason, "取消原因不能为空");
         Objects.requireNonNull(operatedBy, "取消操作人不能为空");
         Objects.requireNonNull(when, "取消时间不能为空");
+        assertTransition(OrderStatus.CANCELLED);
+        requireFulfillmentReferences();
         recordChange(OrderStatus.CANCELLED, reason, operatedBy, when);
+    }
+
+    private void requireFulfillmentReferences() {
+        long legacy = items.stream().filter(OrderItem::usesLegacyReservation).count();
+        if ((legacy != 0 && legacy != items.size())
+                || items.stream().map(item -> item.reservationNoFor(orderNo)).distinct().count() != items.size()) {
+            throw new OrderDomainException("订单行的历史预占归属不唯一，须先核查");
+        }
     }
 
     /** 同一有效申请只产生一次事实；申请资格和整单金额一起由订单守护。 */
@@ -377,8 +412,9 @@ public class Order {
         switch (target) {
             case PAID -> events.add(OrderPaidEvent.raise(orderNo, paidAmount, when));
             case SHIPPED -> events.add(OrderShippedEvent.raise(orderNo, operatedBy, when, items.stream()
-                    .map(item -> new OrderShippedEvent.ShipmentLine(orderNo + ":SKU-" + item.skuId(),
-                            "SKU-" + item.skuId(), item.quantity())).toList()));
+                    .map(item -> new OrderShippedEvent.ShipmentLine(item.reservationNoFor(orderNo),
+                            item.inventorySkuCode(), item.quantity(),
+                            item.usesLegacyReservation() ? null : item.lineId())).toList()));
             case RECEIVED -> events.add(OrderReceivedEvent.raise(orderNo, operatedBy, when));
             case REFUND_REQUESTED -> events.add(RefundRequestedEvent.raise(orderNo, refund, when));
             case REFUNDED -> events.add(RefundCompletedEvent.raise(orderNo, refund, when));

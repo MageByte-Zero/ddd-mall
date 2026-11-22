@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 订单 → 库存集成契约
-  version: 1.2.0
+  version: 1.3.0
   description: |
     L13 库存动作幂等契约。单SKU订单 reservationNo=orderNo:skuCode，
     requestKey=RESERVE:reservationNo 或 RELEASE:reservationNo。
@@ -9,6 +9,8 @@ info:
     同预占单同动作换key409，不创建第二份动作；只支持整笔释放/出库。
     结果是分支结果，Seata AT最终结果由全局事务决定，不等于订单请求入口幂等。
     L12旧余额无业务归属，迁移前必须核对，不能自动生成预占单。
+    L20 新订单逐行使用 orderNo:LINE:lineId，多个预占可共用一个 SKU 的容量。
+    历史订单继续使用能核对的旧预占号，已有请求键与回执保持原样。
 servers:
   - url: http://mall-inventory:8082
 paths:
@@ -23,6 +25,20 @@ paths:
           $ref: '#/components/responses/Success'
         '400':
           $ref: '#/components/responses/Invalid'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/BusinessFailure'
+  /api/inventories/reservations/{reservationNo}:
+    get:
+      operationId: requireLegacyReservation
+      summary: 核对历史预占仍为 RESERVED 并匹配原 SKU 与数量
+      parameters:
+        - {in: path, name: reservationNo, required: true, schema: {type: string, maxLength: 128}}
+        - {in: query, name: skuCode, required: true, schema: {type: string, maxLength: 64}}
+        - {in: query, name: quantity, required: true, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {description: 当前锁定核对通过，不产生库存动作}
         '409':
           $ref: '#/components/responses/Conflict'
         '422':

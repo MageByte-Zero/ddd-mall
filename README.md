@@ -127,6 +127,35 @@ python3 fixtures/verification/payment-channel-v2.py \
   --lesson17-baseline-order-jar ../ddd-mall-l15/mall-order/target/mall-order-0.1.0-SNAPSHOT.jar
 ```
 
+### 第 20 讲订单行与逐行预占
+
+`POST /api/orders` 接受以下多行请求。单行调用仍可提交原顶层 `skuId` 和 `quantity`，并可附带原 `productId`、`productName`、`unitPrice`。两种请求形状分别使用。详情返回 `lineId`、`purchaseRequestNo` 和新行的预占引用。
+
+```json
+{
+  "userId": 20,
+  "receiverName": "采购员",
+  "receiverPhone": "13800000000",
+  "receiverAddress": "教学地址",
+  "items": [
+    {"skuId": 20101, "quantity": 1, "purchaseRequestNo": "PR-A"},
+    {"skuId": 20101, "quantity": 2, "purchaseRequestNo": "PR-B"}
+  ]
+}
+```
+
+运行以下命令复验保存、库存不足回滚、取消、支付交接、发货重投及迁移。需要 JDK 21、Maven、Docker Compose 和 Python 3。已有运行中的 `ddd` Compose 容器可直接复用。夹具启停独立业务进程，保留独立测试数据库、topic 和日志以便核对。运行前确保本地端口 28081–28084 可用。命令从本仓库根目录执行。
+
+```bash
+docker compose -p ddd -f docker-compose/docker-compose.yml up -d mysql nacos rocketmq-namesrv rocketmq-broker seata-server
+mvn -B -DskipTests package
+git clone --depth 1 --branch lesson-19 https://github.com/MageByte-Zero/ddd-mall.git ../ddd-mall-l19
+(cd ../ddd-mall-l19 && mvn -B -pl mall-order,mall-inventory -am -DskipTests package)
+python3 fixtures/verification/order-lines.py --baseline-root ../ddd-mall-l19
+```
+
+夹具先用旧版应用创建真实订单和 v2 发货事件，再换新版应用复用测试数据库。结果中 `legacy` 记录旧预占及 v2 去重，`secondLineRollsBack` 记录整单失败前后的库存与副作用，`shipment` 可用来核对原两行和重投后的出库数量。升级实际存量时，先停止旧订单写入、升级库存消费者，再迁移订单库并启动新版订单写入。[订单行需求](fixtures/requirements/order-lines.md) · [发货事件契约](fixtures/contracts/order-events.yaml)
+
 ## 脚本一览
 
 | 脚本 | 职责 |

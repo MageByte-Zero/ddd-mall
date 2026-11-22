@@ -52,4 +52,44 @@ class ShipmentReliabilityTest {
         for(String wrong:List.of(body.replace("\"quantity\":2","\"quantity\":2.7"),body.replace("\"quantity\":2","\"quantity\":\"2\""),body.replace("\"schemaVersion\":2","\"schemaVersion\":1"),body.replace("OrderShipped","OrderCancelled")))assertThrows(IllegalArgumentException.class,()->consumer.onMessage(wrong));
         assertEquals(0,confirms(s));
     }
+
+    @Test void second_line_failure_of_same_sku_rolls_back_inbox_and_first_confirmation() throws Exception {
+        String sku = sku();
+        String order = id();
+        String event = id();
+        String first = id();
+        String second = id();
+        reserve(order + ":LINE", first, sku, 1);
+        var firstLine = new ShipmentFact.Line(order + ":LINE:" + first, sku, 1, first);
+        var secondLine = new ShipmentFact.Line(order + ":LINE:" + second, sku, 2, second);
+        var consumer = new InventoryShipmentConsumer(json, shipments);
+        var wire = new HashMap<>(Map.of("eventId", event, "eventName", "OrderShipped", "schemaVersion", 3,
+                "orderNo", order, "operatedBy", "merchant:20", "occurredOn", "2026-11-22T10:00:00",
+                "lines", List.of(firstLine, secondLine)));
+        String body = json.writeValueAsString(wire);
+
+        assertThrows(InventoryDomainException.class, () -> consumer.onMessage(body));
+        assertEquals(0, inbox(event));
+        assertEquals(0, confirms(sku));
+        assertEquals("RESERVED", jdbc.queryForObject("SELECT state FROM t_inventory_reservation WHERE reservation_no=?",
+                String.class, firstLine.reservationNo()));
+
+        reserve(order + ":LINE", second, sku, 2);
+        consumer.onMessage(body);
+        assertEquals(1, inbox(event));
+        assertEquals(2, confirms(sku));
+        wire.put("lines", List.of(firstLine, new ShipmentFact.Line(secondLine.reservationNo(), sku, 1, second)));
+        String changed = json.writeValueAsString(wire);
+        assertThrows(InventoryIdempotencyException.class, () -> consumer.onMessage(changed));
+
+        wire.put("lines", List.of(firstLine, new ShipmentFact.Line(secondLine.reservationNo(), sku, 2, first)));
+        String wrongReference = json.writeValueAsString(wire);
+        assertThrows(IllegalArgumentException.class, () -> consumer.onMessage(wrongReference));
+        assertEquals(2, confirms(sku));
+    }
+
+    private void reserve(String prefix, String lineId, String sku, int quantity) {
+        String reservation = prefix + ":" + lineId;
+        inventory.reserve(new InventoryOperation("RESERVE:" + reservation, reservation, sku, quantity));
+    }
 }

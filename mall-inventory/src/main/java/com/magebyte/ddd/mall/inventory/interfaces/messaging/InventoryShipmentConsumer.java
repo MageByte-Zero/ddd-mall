@@ -9,12 +9,15 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.regex.Pattern;
 @Component
 @ConditionalOnProperty(name="ddd.inventory.shipment-consumer-enabled", havingValue="true", matchIfMissing=true)
 @RocketMQMessageListener(topic="${ddd.inventory.shipment-topic:order-events}",
         consumerGroup="${ddd.inventory.shipment-group:inventory-shipment-v2}",selectorExpression="OrderShipped",
         maxReconsumeTimes=16)
 public class InventoryShipmentConsumer implements RocketMQListener<String> {
+    private static final Pattern LINE_ID =
+            Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
     private final ObjectMapper json;
     private final ShipmentApplicationService shipments;
     public InventoryShipmentConsumer(ObjectMapper json,ShipmentApplicationService shipments) {
@@ -28,8 +31,12 @@ public class InventoryShipmentConsumer implements RocketMQListener<String> {
     public ShipmentFact translate(String body) {
         try {
             JsonNode root=json.readTree(body);
-            if (!"OrderShipped".equals(root.path("eventName").asText()) || !root.path("schemaVersion").isIntegralNumber() || !root.path("schemaVersion").canConvertToInt() || root.path("schemaVersion").intValue()!=2)
-                throw new IllegalArgumentException("库存只接受 OrderShipped v2；v1 缺少明细不得猜测");
+            JsonNode versionField = root.path("schemaVersion");
+            int version = versionField.intValue();
+            if (!"OrderShipped".equals(root.path("eventName").asText()) || !versionField.isIntegralNumber()
+                    || !versionField.canConvertToInt() || (version != 2 && version != 3)) {
+                throw new IllegalArgumentException("库存只接受 OrderShipped v2/v3；v1 缺少明细");
+            }
             for (String field : List.of("eventId", "orderNo", "operatedBy", "occurredOn"))
                 if (!root.path(field).isTextual()) throw new IllegalArgumentException("发货身份字段必须是字符串");
             String id=root.path("eventId").asText(), order=root.path("orderNo").asText();
@@ -41,18 +48,33 @@ public class InventoryShipmentConsumer implements RocketMQListener<String> {
                 if (!line.path("quantity").isIntegralNumber() || !line.path("quantity").canConvertToInt()
                         || !line.path("reservationNo").isTextual() || !line.path("skuCode").isTextual())
                     throw new IllegalArgumentException("发货明细字段类型不合法");
+                String lineId = null;
+                if (version == 3) {
+                    lineId = line.path("lineId").textValue();
+                    if (lineId == null || !LINE_ID.matcher(lineId).matches()) {
+                        throw new IllegalArgumentException("发货行身份格式不合法");
+                    }
+                }
                 lines.add(new ShipmentFact.Line(line.path("reservationNo").textValue(),
-                        line.path("skuCode").textValue(),line.path("quantity").intValue()));
+                        line.path("skuCode").textValue(), line.path("quantity").intValue(), lineId));
             }
             // 标准化已知契约字段；JSON 字段顺序/空白不改变身份，未知扩展字段不进入业务指纹。
             var canonical=new TreeMap<String,Object>();
-            canonical.put("eventName","OrderShipped"); canonical.put("schemaVersion",2);
+            canonical.put("eventName","OrderShipped"); canonical.put("schemaVersion",version);
             canonical.put("orderNo",order); canonical.put("operatedBy",root.path("operatedBy").asText());
             canonical.put("occurredOn",root.path("occurredOn").asText());
-            canonical.put("lines",lines.stream().sorted(Comparator.comparing(ShipmentFact.Line::reservationNo)).toList());
+            var sortedLines = lines.stream().sorted(Comparator.comparing(ShipmentFact.Line::reservationNo)).toList();
+            // v2 的 Inbox 已存指纹，必须哈希原有三字段形状。
+            canonical.put("lines", version == 2 ? sortedLines.stream().map(LegacyLine::from).toList() : sortedLines);
             String fingerprint=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(json.writeValueAsBytes(canonical)));
-            return new ShipmentFact(id,order,lines,fingerprint);
+            return new ShipmentFact(id,order,lines,fingerprint,version);
         } catch (Exception failure) { throw new IllegalArgumentException("发货事件无法处理",failure); }
+    }
+
+    private record LegacyLine(String reservationNo, String skuCode, int quantity) {
+        private static LegacyLine from(ShipmentFact.Line line) {
+            return new LegacyLine(line.reservationNo(), line.skuCode(), line.quantity());
+        }
     }
 }

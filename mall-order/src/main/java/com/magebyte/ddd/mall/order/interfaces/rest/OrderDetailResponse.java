@@ -37,11 +37,13 @@ public record OrderDetailResponse(
     }
 
     public record OrderItemView(Long productId, Long skuId, String productName,
-                                int quantity, String unitPrice, String subtotal) {
+                                int quantity, String unitPrice, String subtotal,
+                                String lineId, String purchaseRequestNo, String reservationNo) {
 
         private static OrderItemView from(OrderDetail.OrderItemView view) {
             return new OrderItemView(view.productId(), view.skuId(), view.productName(),
-                    view.quantity(), view.unitPrice(), view.subtotal());
+                    view.quantity(), view.unitPrice(), view.subtotal(),
+                    view.lineId(), view.purchaseRequestNo(), view.reservationNo());
         }
     }
 

@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: 订单领域事件总线
-  version: 1.2.0
+  version: 1.3.0
   description: |
     订单限界上下文（mall-order，核心域）向外发布的领域事件契约。
 
@@ -77,7 +77,8 @@ components:
       name: OrderShipped
       title: 订单已发货
       description: |
-        v2 携带发货时预占明细事实快照。库存 inventory-shipment-v2 订阅只接受 v2，
+        v2 携带发货时已有预占明细快照；v3 增加稳定 lineId，允许同 SKU 多行。
+        inventory-shipment-v2 订阅读取两个版本并保留原 Inbox 身份，
         v1 缺少身份与数量时拒绝并保留失败恢复入口，不读取订单库补猜。
         支付保持预占；发货本地事务写状态与 Outbox，库存异步整笔确认出库。
         同 eventId 须核验内容；不同 eventId 仍使用 CONFIRM:reservationNo，防再次出库。
@@ -85,22 +86,9 @@ components:
         rocketmq:
           tag: OrderShipped
       payload:
-        allOf:
-          - $ref: '#/components/schemas/EventEnvelope'
-          - type: object
-            required: [operatedBy, lines]
-            properties:
-              schemaVersion:
-                type: integer
-                const: 2
-              lines:
-                type: array
-                minItems: 1
-                items:
-                  $ref: "#/components/schemas/ShipmentLine"
-              operatedBy:
-                type: string
-                example: 'admin:1001'
+        oneOf:
+          - $ref: '#/components/schemas/OrderShippedV2'
+          - $ref: '#/components/schemas/OrderShippedV3'
     OrderReceived:
       name: OrderReceived
       title: 订单已收货
@@ -216,7 +204,7 @@ components:
           example: OrderCancelled
         schemaVersion:
           type: integer
-          description: 载荷结构版本，OrderShipped 为 2，其他事件为 1；不兼容变更时 +1。
+          description: 载荷结构版本，OrderShipped 接受 2 和 3，其他订单事件为 1。
           example: 1
         orderNo:
           type: string
@@ -227,19 +215,57 @@ components:
           format: date-time
           description: 业务事实发生时刻（不是消息发送时刻）。
           example: '2026-09-16T11:34:05.123'
+    OrderShippedV2:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [operatedBy, lines]
+          properties:
+            schemaVersion: {type: integer, const: 2}
+            operatedBy: {type: string, minLength: 1}
+            lines:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/ShipmentLine'
+    OrderShippedV3:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [operatedBy, lines]
+          properties:
+            schemaVersion: {type: integer, const: 3}
+            operatedBy: {type: string, minLength: 1}
+            lines:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/ShipmentLineV3'
     ShipmentLine:
       type: object
       required: [reservationNo, skuCode, quantity]
       properties:
         reservationNo:
           type: string
-          description: 当前单 SKU 行身份使用 orderNo:skuCode；同订单重复 SKU 发货拒绝。
+          description: 历史预占使用 orderNo:skuCode，事件内预占号必须唯一。
         skuCode:
           type: string
           minLength: 1
         quantity:
           type: integer
           minimum: 1
+    ShipmentLineV3:
+      type: object
+      required: [lineId, reservationNo, skuCode, quantity]
+      properties:
+        lineId:
+          type: string
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        reservationNo:
+          type: string
+          description: 使用 orderNo:LINE:lineId，事件内预占号必须唯一。
+        skuCode: {type: string, minLength: 1}
+        quantity: {type: integer, minimum: 1}
     Money:
       type: object
       description: |

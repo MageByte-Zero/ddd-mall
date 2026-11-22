@@ -16,6 +16,16 @@ import java.time.LocalDateTime;
  */
 @TableName("t_order_item")
 public class OrderItemDO {
+    private String lineId;
+    private String reservationNo;
+    private String purchaseRequestNo;
+
+    public String getLineId() { return lineId; }
+    public void setLineId(String lineId) { this.lineId = lineId; }
+    public String getReservationNo() { return reservationNo; }
+    public void setReservationNo(String reservationNo) { this.reservationNo = reservationNo; }
+    public String getPurchaseRequestNo() { return purchaseRequestNo; }
+    public void setPurchaseRequestNo(String purchaseRequestNo) { this.purchaseRequestNo = purchaseRequestNo; }
 
     @TableId(type = IdType.AUTO)
     private Long id;

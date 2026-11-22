@@ -6,6 +6,8 @@ import com.magebyte.ddd.mall.order.domain.Money;
 import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+
 @Service
 public class CatalogOrderService {
     private final CatalogLookup catalog;
@@ -17,28 +19,36 @@ public class CatalogOrderService {
     }
 
     public OrderDetail create(CreateOrderCommand request) {
-        var sku = catalog.find(request.skuId()).orElseThrow(() -> new OrderDomainException("SKU 不存在"));
-        if (!request.skuId().equals(sku.skuId()) || sku.productId() == null || sku.productId() <= 0
+        var snapshots = new HashMap<Long, CatalogLookup.Sku>();
+        var lines = request.lines().stream().map(line -> snapshot(line,
+                snapshots.computeIfAbsent(line.skuId(), this::findPurchasableSku))).toList();
+
+        // 目录读取在 AT 事务之前。同一 SKU 在本次下单只读取一次。
+        return orders.createOrder(new CreateOrderCommand(request.userId(), lines, request.receiverName(),
+                request.receiverPhone(), request.receiverAddress(), request.simulateRollbackFailure()));
+    }
+
+    private CatalogLookup.Sku findPurchasableSku(long skuId) {
+        var sku = catalog.find(skuId).orElseThrow(() -> new OrderDomainException("SKU 不存在"));
+        if (!Long.valueOf(skuId).equals(sku.skuId()) || sku.productId() == null || sku.productId() <= 0
                 || sku.name() == null || sku.name().isBlank() || sku.name().length() > 128
                 || sku.unitPrice() == null || sku.unitPrice().signum() <= 0 || sku.enabled() == null) {
             throw new CatalogUnavailableException("商品目录返回了无效的快照，请稍后重试");
         }
         if (!sku.enabled()) throw new OrderDomainException("SKU 已停用");
-        if (request.productId() != null && !request.productId().equals(sku.productId())) {
+        return sku;
+    }
+
+    private static CreateOrderCommand.Line snapshot(CreateOrderCommand.Line line, CatalogLookup.Sku sku) {
+        if (line.productId() != null && !line.productId().equals(sku.productId())) {
             throw new OrderDomainException("SKU 不属于请求中的商品");
         }
 
         Money price = Money.of(sku.unitPrice());
-        if (request.unitPrice() != null && !Money.of(request.unitPrice()).equals(price)) {
+        if (line.unitPrice() != null && !Money.of(line.unitPrice()).equals(price)) {
             throw new OrderDomainException("商品单价已变化，请刷新后重新下单");
         }
-        if (price.multiply(request.quantity()).amount().precision() > 18) {
-            throw new OrderDomainException("订单金额超出允许范围");
-        }
-
-        // Call the existing transactional bean only after obtaining an eligible catalogue snapshot.
-        return orders.createOrder(new CreateOrderCommand(request.userId(), sku.productId(), sku.skuId(),
-                sku.name(), request.quantity(), price.toString(), request.receiverName(),
-                request.receiverPhone(), request.receiverAddress(), request.simulateRollbackFailure()));
+        return new CreateOrderCommand.Line(sku.productId(), sku.skuId(), sku.name(),
+                line.quantity(), price.toString(), line.purchaseRequestNo());
     }
 }

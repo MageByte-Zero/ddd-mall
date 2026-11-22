@@ -1,11 +1,12 @@
 package com.magebyte.ddd.mall.order.domain;
 
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * 订单项（OrderItem）实体。
  *
- * <p>有身份（id）、生命周期由订单聚合根管理：只能经由聚合根创建和访问，
+ * <p>有稳定业务身份（lineId）、生命周期由订单聚合根管理，
  * 外部不允许绕过 Order 直接持有或修改订单项。创建后不可变——
  * 数量与单价在下单时冻结，改数量走的是"删项重加"而不是就地修改。
  *
@@ -14,16 +15,25 @@ import java.util.Objects;
  */
 public class OrderItem {
 
-    private Long id;
+    private final Long id;
+    private final String lineId;
+    private final String reservationNo;
+    private final String purchaseRequestNo;
     private final Long productId;
     private final Long skuId;
     private final String productName;
     private final int quantity;
     private final Money unitPrice;
 
-    private OrderItem(Long id, Long productId, Long skuId,
-                      String productName, int quantity, Money unitPrice) {
+    private OrderItem(Long id, String lineId, String reservationNo, String purchaseRequestNo,
+                      Long productId, Long skuId, String productName, int quantity, Money unitPrice) {
         this.id = id;
+        this.lineId = Objects.requireNonNull(lineId, "订单行身份不能为空");
+        this.reservationNo = reservationNo;
+        if (purchaseRequestNo != null && (purchaseRequestNo.isBlank() || purchaseRequestNo.length() > 64)) {
+            throw new OrderDomainException("采购申请号须为 1 至 64 个字符");
+        }
+        this.purchaseRequestNo = purchaseRequestNo;
         this.productId = Objects.requireNonNull(productId, "商品ID不能为空");
         this.skuId = Objects.requireNonNull(skuId, "SKU ID不能为空");
         if (productName == null || productName.isBlank()) {
@@ -40,14 +50,27 @@ public class OrderItem {
     /** 新建订单项（尚未持久化，id 为空）。 */
     public static OrderItem create(Long productId, Long skuId, String productName,
                                    int quantity, Money unitPrice) {
-        return new OrderItem(null, productId, skuId, productName, quantity, unitPrice);
+        return new OrderItem(null, UUID.randomUUID().toString(), null, null,
+                productId, skuId, productName, quantity, unitPrice);
     }
 
-    /** 从持久化数据重组订单项，仓储实现专用入口。 */
+    static OrderItem place(String orderNo, Long productId, Long skuId, String productName,
+                           int quantity, Money unitPrice, String purchaseRequestNo) {
+        String lineId = UUID.randomUUID().toString();
+        return new OrderItem(null, lineId, orderNo + ":LINE:" + lineId, purchaseRequestNo,
+                productId, skuId, productName, quantity, unitPrice);
+    }
+
     public static OrderItem reconstitute(Long id, Long productId, Long skuId,
                                          String productName, int quantity, Money unitPrice) {
+        return reconstitute(id, "legacy-" + id, null, null, productId, skuId, productName, quantity, unitPrice);
+    }
+
+    public static OrderItem reconstitute(Long id, String lineId, String reservationNo, String purchaseRequestNo,
+                                         Long productId, Long skuId, String productName, int quantity, Money unitPrice) {
         Objects.requireNonNull(id, "持久化订单项的 id 不能为空");
-        return new OrderItem(id, productId, skuId, productName, quantity, unitPrice);
+        return new OrderItem(id, lineId, reservationNo, purchaseRequestNo,
+                productId, skuId, productName, quantity, unitPrice);
     }
 
     /** 小计 = 单价 × 数量，现算不存储。 */
@@ -57,6 +80,21 @@ public class OrderItem {
 
     public Long id() {
         return id;
+    }
+
+    public String lineId() { return lineId; }
+
+    public String purchaseRequestNo() { return purchaseRequestNo; }
+
+    public boolean usesLegacyReservation() { return reservationNo == null; }
+
+    /** 已绑定的预占引用。历史行在对账前没有已验证的绑定。 */
+    public String reservationNo() { return reservationNo; }
+
+    public String inventorySkuCode() { return "SKU-" + skuId; }
+
+    public String reservationNoFor(String orderNo) {
+        return usesLegacyReservation() ? orderNo + ":" + inventorySkuCode() : reservationNo;
     }
 
     public Long productId() {
@@ -79,10 +117,6 @@ public class OrderItem {
         return unitPrice;
     }
 
-    /**
-     * 实体的相等性由身份决定：已持久化的订单项按 id 判等；
-     * 未持久化（id 为空）时退回引用相等。
-     */
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -91,14 +125,11 @@ public class OrderItem {
         if (!(o instanceof OrderItem other)) {
             return false;
         }
-        if (this.id == null || other.id == null) {
-            return false;
-        }
-        return this.id.equals(other.id);
+        return lineId.equals(other.lineId);
     }
 
     @Override
     public int hashCode() {
-        return id == null ? System.identityHashCode(this) : id.hashCode();
+        return lineId.hashCode();
     }
 }

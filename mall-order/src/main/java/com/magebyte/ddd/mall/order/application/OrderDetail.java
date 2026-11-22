@@ -51,12 +51,14 @@ public record OrderDetail(
 
     /** 订单项视图：含单价与小计，便于调用方核对金额守恒。 */
     public record OrderItemView(Long productId, Long skuId, String productName,
-                                int quantity, String unitPrice, String subtotal) {
+                                int quantity, String unitPrice, String subtotal,
+                                String lineId, String purchaseRequestNo, String reservationNo) {
 
         private static OrderItemView from(OrderItem item) {
             return new OrderItemView(item.productId(), item.skuId(), item.productName(),
                     item.quantity(), item.unitPrice().amount().toPlainString(),
-                    item.subtotal().amount().toPlainString());
+                    item.subtotal().amount().toPlainString(),
+                    item.lineId(), item.purchaseRequestNo(), item.reservationNo());
         }
     }
 

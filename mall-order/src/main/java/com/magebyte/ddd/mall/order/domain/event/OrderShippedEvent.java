@@ -12,7 +12,7 @@ import java.util.UUID;
  *
  * @param eventId        事件唯一 ID（UUID，发布时作为消息 keys）
  * @param eventName      事件名（线上 wire name），固定为 {@link #NAME}
- * @param schemaVersion  载荷 schema 版本，固定为 {@link #SCHEMA_VERSION}
+ * @param schemaVersion  载荷版本。v3 含稳定行身份，已有预占沿用 v2。
  * @param orderNo        事件源订单号
  * @param operatedBy     发货操作人标识（如 merchant:2001）
  * @param occurredOn     事件发生时间（发货时间）
@@ -25,12 +25,12 @@ public record OrderShippedEvent(String eventId, String eventName, int schemaVers
     /** 线上事件名 / 消息 tag：与第 1 讲锁定的领域事件词汇表一致。 */
     public static final String NAME = "OrderShipped";
 
-    /** 载荷 schema 版本，v2 增加稳定预占明细事实快照。 */
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
 
     /** 聚合根迁移方法调用：事件 ID 在这里生成，事件名与版本固定。 */
     public static OrderShippedEvent raise(String orderNo, String operatedBy, LocalDateTime when, List<ShipmentLine> lines) {
-        return new OrderShippedEvent(UUID.randomUUID().toString(), NAME, SCHEMA_VERSION,
+        int version = lines.stream().anyMatch(line -> line.lineId() != null) ? SCHEMA_VERSION : 2;
+        return new OrderShippedEvent(UUID.randomUUID().toString(), NAME, version,
                 orderNo, operatedBy, when, List.copyOf(lines));
     }
 
@@ -40,7 +40,7 @@ public record OrderShippedEvent(String eventId, String eventName, int schemaVers
         return new OrderShippedEvent(UUID.randomUUID().toString(), NAME, 1, orderNo, operatedBy, when, List.of());
     }
 
-    public record ShipmentLine(String reservationNo, String skuCode, int quantity) {}
+    public record ShipmentLine(String reservationNo, String skuCode, int quantity, String lineId) {}
 
     public OrderShippedEvent {
         lines = lines == null ? List.of() : List.copyOf(lines);

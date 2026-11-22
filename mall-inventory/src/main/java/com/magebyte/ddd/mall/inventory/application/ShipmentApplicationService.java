@@ -40,8 +40,8 @@ public class ShipmentApplicationService {
         // 所有库存锁按相同顺序获取，避免多 SKU 逆序导致死锁。
         var lines = fact.lines().stream()
                 .sorted(Comparator.comparing(ShipmentFact.Line::skuCode)).toList();
-        for (var line : lines) {
-            operations.lockInventory(line.skuCode());
+        for (String skuCode : lines.stream().map(ShipmentFact.Line::skuCode).distinct().toList()) {
+            operations.lockInventory(skuCode);
         }
         for (var line : lines) {
             inventory.confirm(new InventoryOperation("CONFIRM:" + line.reservationNo(),

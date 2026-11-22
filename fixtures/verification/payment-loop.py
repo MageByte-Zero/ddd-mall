@@ -70,7 +70,7 @@ def jar(role):
     return matches[0]
 
 
-def start(role, artifact, *settings):
+def start(role, artifact, *settings, order_topic="order-events"):
     assert role not in PROCESSES
     log = LOGS / f"{role}-{time.time_ns()}.log"
     env = dict(os.environ, DDD_PAYMENT_HANDOFF_TOKEN=HANDOFF, DDD_PAYMENT_CALLBACK_TOKEN=CHANNEL)
@@ -80,7 +80,7 @@ def start(role, artifact, *settings):
             f"--spring.cloud.nacos.discovery.group=DDD17_{RUN}",
             f"--spring.datasource.url=jdbc:mysql://127.0.0.1:3306/{SCHEMAS[role]}"
             "?characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&connectionTimeZone=UTC",
-            f"--ddd.order.events-topic=order-events",
+            f"--ddd.order.events-topic={order_topic}",
             f"--ddd.payment.events-topic={TOPIC}", *settings]
     with log.open("w") as stream:
         PROCESSES[role] = subprocess.Popen(args, stdout=stream, stderr=subprocess.STDOUT, env=env)

@@ -169,6 +169,7 @@
 ### Schema (Flyway)
 - `V1__init_order_schema.sql` — t_order / t_order_item / t_order_status_history / t_outbox_event / undo_log — L4
   - `t_outbox_event`（event_id 唯一键 uk_event_id、idx_status(status, next_retry_at)；列：event_id/aggregate_type/aggregate_id/event_type/payload/status(PENDING/SENT/FAILED)/retry_count/next_retry_at/created_at/sent_at）：L4 已建，L8 不读写，**L9 启用**——仓储在业务事务内写 PENDING 行，OutboxEventRelay 轮询投递成功标 SENT
+- `V4__order_line_identity.sql` — L20：`t_order_item` 增加 `line_id`、`reservation_no`、`purchase_request_no`，回填旧行身份并增加 `uk_order_line(order_id,line_id)`。
 
 ### mall-inventory (支撑域) — 启动类 L4 / 四层包 L5 / 最小 AT 参与者 L10 / 归还反向能力 L11 / **预占模型 + 乐观锁 L12**
 
@@ -338,3 +339,11 @@
 - `SimulatedV2Controller` 增加 `POST /api/payments/callbacks/simulated/v2` 和 `POST /api/payments/{paymentNo}/simulated-query`，分别使用独立的 V2 模拟回调凭据及既有操作凭据。原 V1 回调、开单和支付查询契约保留。
 - `SimulatedV2Protocol` 将渠道受理、处理中、收款、拒绝和未知翻译为本地观察，验证引用、精确金额和应答格式。`ObserveSimulatedPayment` 经 `PaymentChannelQuery` 查询原单，`SimulatedV2QueryClient` 调用配置的教学端点并阻止跨单应答。查单超时保留原单状态。
 - 可信观察由原 `PaymentCallbackService` 与 `Payment.observe` 决定能否确认。支付主状态、MySQL 结构和 `PaymentSucceeded` 公开契约继续沿用第 17 讲；回调与查单共享原确认事务和 Outbox。V2 契约和过程验证分别见 `fixtures/contracts/simulated-channel-v2.yaml`、`fixtures/verification/payment-channel-v2.py`。
+
+## 第 20 讲 · 订单行与逐行库存预占
+
+- `POST /api/orders` 新增 `items[]`（`skuId`、`quantity`、`purchaseRequestNo`），原顶层单行参数仍兼容。接口层统一到 `CreateOrderCommand.Line`，目录快照在 `CatalogOrderService` 按本次请求中的 SKU 读取一次。
+- `Order.addLine`、`OrderItem.lineId` 和 `reservationNo` 固定行身份及库存引用（`orderNo:LINE:lineId`）。原单号与总额继续用于支付。订单详情增加行身份等字段。
+- Flyway V4 保留明细主键，为旧行补 `legacy-<id>` 并约束订单内的行身份唯一。仓储保存状态时仅插入新行。库存原预占号没有迁移。
+- `OrderApplicationService` 逐行预占和释放；`InventoryReservationLookup` 经 `GET /api/inventories/reservations/{reservationNo}` 核对历史预占后才允许既有订单发货。
+- `OrderShippedEvent` v3 明细包含 `lineId`；历史订单仍产 v2。库存 `InventoryShipmentConsumer` 按版本校验并保持 v2 既有指纹及订阅标识，`ShipmentApplicationService` 按原预占分别确认，出库和 Inbox 同事务。详见 ADR-11。

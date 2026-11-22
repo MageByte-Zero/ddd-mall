@@ -3,12 +3,15 @@ package com.magebyte.ddd.mall.inventory.interfaces.rest;
 import com.magebyte.ddd.mall.commons.response.Result;
 import com.magebyte.ddd.mall.inventory.application.InventoryApplicationService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -39,6 +42,14 @@ public class InventoryController {
     @PostMapping("/reservations")
     public Result<com.magebyte.ddd.mall.inventory.domain.InventoryOperationResult> reserveIdentified(@Valid @RequestBody InventoryOperationRequest request) {
         return Result.ok(idempotent.reserve(request.toCommand()));
+    }
+
+    @GetMapping("/reservations/{reservationNo}")
+    public Result<Void> requireReserved(@PathVariable @Size(max = 128) String reservationNo,
+                                        @RequestParam @Size(max = 64) String skuCode,
+                                        @RequestParam @Positive int quantity) {
+        idempotent.requireReserved(reservationNo, skuCode, quantity);
+        return Result.ok();
     }
 
     /**

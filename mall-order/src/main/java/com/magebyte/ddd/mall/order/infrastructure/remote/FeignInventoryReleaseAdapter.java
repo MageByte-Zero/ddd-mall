@@ -1,6 +1,7 @@
 package com.magebyte.ddd.mall.order.infrastructure.remote;
 
 import com.magebyte.ddd.mall.order.domain.InventoryReleasePort;
+import com.magebyte.ddd.mall.order.domain.InventoryReservationLookup;
 import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import feign.FeignException;
 import org.springframework.stereotype.Component;
@@ -14,7 +15,7 @@ import org.springframework.stereotype.Component;
  * 宁可让用户看到"取消失败稍后再试"，也不能出现"订单已取消、库存没还"的对账缺口。
  */
 @Component
-public class FeignInventoryReleaseAdapter implements InventoryReleasePort {
+public class FeignInventoryReleaseAdapter implements InventoryReleasePort, InventoryReservationLookup {
 
     private final InventoryFeignApi inventoryFeignApi;
 
@@ -36,6 +37,15 @@ public class FeignInventoryReleaseAdapter implements InventoryReleasePort {
             String detail = ex.contentUTF8();
             throw new OrderDomainException("库存服务归还失败（HTTP " + ex.status()
                     + "），全局事务将回滚：" + detail, ex);
+        }
+    }
+
+    @Override
+    public void requireReserved(String reservationNo, String skuCode, int quantity) {
+        try {
+            inventoryFeignApi.requireReserved(reservationNo, skuCode, quantity);
+        } catch (FeignException ex) {
+            throw new OrderDomainException("历史预占无法核对，须先核查: " + reservationNo, ex);
         }
     }
 }

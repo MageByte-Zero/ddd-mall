@@ -25,6 +25,18 @@ public class IdempotentInventoryService {
     @Transactional
     public InventoryOperationResult confirm(InventoryOperation request) { return execute(request,"CONFIRM"); }
 
+    @GlobalLock
+    @Transactional
+    public void requireReserved(String reservationNo, String skuCode, int quantity) {
+        store.lockInventory(skuCode);
+        Reservation reservation = store.findReservation(reservationNo)
+                .orElseThrow(() -> new InventoryDomainException("历史预占单不存在: " + reservationNo));
+        reservation.requireSame(skuCode, quantity);
+        if (reservation.state() != Reservation.State.RESERVED) {
+            throw new InventoryDomainException("历史预占已结束: " + reservationNo);
+        }
+    }
+
     private InventoryOperationResult execute(InventoryOperation request, String action) {
         // 必须先做当前锁定读；有 XID 或 @GlobalLock 时 Seata 检查全局锁。
         Inventory inventory = store.lockInventory(request.skuCode());

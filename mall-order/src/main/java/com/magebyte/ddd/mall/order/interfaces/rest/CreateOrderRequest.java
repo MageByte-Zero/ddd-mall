@@ -1,11 +1,16 @@
 package com.magebyte.ddd.mall.order.interfaces.rest;
 
+import com.magebyte.ddd.mall.order.application.CreateOrderCommand;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
+
+import java.util.List;
 
 /**
  * 创建订单请求体（第 11 讲补齐收货地址，形成完整 DTO 校验规约）。
@@ -22,12 +27,10 @@ public record CreateOrderRequest(
         Long userId,
         @Positive(message = "productId 必须为正整数")
         Long productId,
-        @NotNull(message = "skuId 不能为空")
         @Positive(message = "skuId 必须为正整数")
         Long skuId,
         @Size(max = 128, message = "productName 不能超过 128 字符")
         String productName,
-        @NotNull(message = "quantity 不能为空")
         @Min(value = 1, message = "购买数量必须 ≥ 1")
         Integer quantity,
         @Pattern(regexp = "^\\d{1,10}(\\.\\d{1,2})?$",
@@ -43,12 +46,31 @@ public record CreateOrderRequest(
         @Size(max = 200, message = "收货地址不能超过 200 字符")
         String receiverAddress,
         /** 教学开关：true 时扣库存成功后停留再失败，用于观察全局回滚。业务调用不要传。 */
-        Boolean simulateRollbackFailure) {
+        Boolean simulateRollbackFailure,
+        @Size(min = 1, max = 50, message = "items 必须包含 1 至 50 行")
+        List<@NotNull @Valid Item> items) {
 
-    /**
-     * 默认不触发故障注入（record 自带访问器返回 Boolean，判空用此方法）。
-     */
-    public boolean isSimulateRollbackFailure() {
-        return Boolean.TRUE.equals(simulateRollbackFailure);
+    @AssertTrue(message = "请提交 items 或原单 SKU 字段，两种请求格式不可混用")
+    public boolean isLineInputValid() {
+        if (items == null) {
+            return skuId != null && quantity != null;
+        }
+        return skuId == null && quantity == null && productId == null && productName == null && unitPrice == null;
+    }
+
+    public CreateOrderCommand toCommand() {
+        if (items == null) {
+            return new CreateOrderCommand(userId, productId, skuId, productName, quantity, unitPrice,
+                    receiverName, receiverPhone, receiverAddress, Boolean.TRUE.equals(simulateRollbackFailure));
+        }
+        return new CreateOrderCommand(userId, items.stream().map(Item::toLine).toList(),
+                receiverName, receiverPhone, receiverAddress, Boolean.TRUE.equals(simulateRollbackFailure));
+    }
+
+    public record Item(@NotNull @Positive Long skuId, @NotNull @Min(1) Integer quantity,
+                       @NotBlank @Size(max = 64) String purchaseRequestNo) {
+        private CreateOrderCommand.Line toLine() {
+            return new CreateOrderCommand.Line(null, skuId, null, quantity, null, purchaseRequestNo);
+        }
     }
 }

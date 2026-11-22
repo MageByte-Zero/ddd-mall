@@ -3,10 +3,10 @@ package com.magebyte.ddd.mall.order.application;
 import com.magebyte.ddd.mall.order.domain.Address;
 import com.magebyte.ddd.mall.order.domain.InventoryDeductionPort;
 import com.magebyte.ddd.mall.order.domain.InventoryReleasePort;
+import com.magebyte.ddd.mall.order.domain.InventoryReservationLookup;
 import com.magebyte.ddd.mall.order.domain.Money;
 import com.magebyte.ddd.mall.order.domain.Order;
 import com.magebyte.ddd.mall.order.domain.OrderDomainException;
-import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderNotFoundException;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderPaymentJournal;
@@ -51,6 +51,7 @@ public class OrderApplicationService {
     private final InventoryDeductionPort inventoryDeduction;
     private final InventoryReleasePort inventoryRelease;
     private final OrderPaymentJournal paymentStore;
+    private final InventoryReservationLookup reservationLookup;
 
     /**
      * 教学故障注入的停留秒数：分支一阶段提交后故意停留，
@@ -62,11 +63,13 @@ public class OrderApplicationService {
     public OrderApplicationService(OrderRepository orderRepository,
                                    InventoryDeductionPort inventoryDeduction,
                                    InventoryReleasePort inventoryRelease,
-                                   OrderPaymentJournal paymentStore) {
+                                   OrderPaymentJournal paymentStore,
+                                   InventoryReservationLookup reservationLookup) {
         this.orderRepository = orderRepository;
         this.inventoryDeduction = inventoryDeduction;
         this.inventoryRelease = inventoryRelease;
         this.paymentStore = paymentStore;
+        this.reservationLookup = reservationLookup;
     }
 
     /**
@@ -85,13 +88,19 @@ public class OrderApplicationService {
         log.info("创建订单用例开始，全局事务 XID={}", RootContext.getXID());
 
         Order order = Order.create(command.userId(), toAddress(command));
-        order.addItem(OrderItem.create(command.productId(), command.skuId(),
-                command.productName(), command.quantity(), Money.of(command.unitPrice())));
+        if (command.lines().isEmpty()) {
+            throw new OrderDomainException("订单至少需要一行");
+        }
+        for (var line : command.lines()) {
+            order.addLine(line.productId(), line.skuId(), line.productName(),
+                    line.quantity(), Money.of(line.unitPrice()), line.purchaseRequestNo());
+        }
         // 分支一：订单库本地事务（订单、订单项、状态历史、Outbox 事件行同生共死）
         Order saved = orderRepository.save(order);
         // 分支二：Feign → 库存 BC 扣减（XID 随 TX_XID 头传播，库存侧本地事务登记为分支）
-        inventoryDeduction.deduct(saved.orderNo() + ":" + toInventorySkuCode(command.skuId()),
-                toInventorySkuCode(command.skuId()), command.quantity());
+        for (var item : saved.getItems()) {
+            inventoryDeduction.deduct(item.reservationNo(), item.inventorySkuCode(), item.quantity());
+        }
 
         if (command.simulateRollbackFailure()) {
             log.warn("教学故障注入：库存分支已提交，停留 {} 秒后抛出失败，观察全局回滚",
@@ -156,10 +165,9 @@ public class OrderApplicationService {
         order.cancel(command.reason(), command.operatedBy(), LocalDateTime.now());
         // 分支一：订单状态 + 状态历史 + Outbox 的 OrderCancelled 行，同属一个本地事务
         Order saved = orderRepository.save(order);
-        // 分支二：按下单时的数量原路归还（多 SKU 订单逐项调用）
-        for (OrderItem item : saved.getItems()) {
-            inventoryRelease.release(saved.orderNo() + ":" + toInventorySkuCode(item.skuId()),
-                    toInventorySkuCode(item.skuId()), item.quantity());
+        // 原预占和原数量来自已保存的订单行。
+        for (var item : saved.getItems()) {
+            inventoryRelease.release(item.reservationNoFor(saved.orderNo()), item.inventorySkuCode(), item.quantity());
         }
 
         if (command.simulateReleaseFailure()) {
@@ -187,6 +195,12 @@ public class OrderApplicationService {
     public OrderDetail shipOrder(ShipOrderCommand command) {
         Order order = findOrder(command.orderNo());
         order.markShipped(command.operatedBy(), LocalDateTime.now());
+        for (var item : order.getItems()) {
+            if (item.usesLegacyReservation()) {
+                reservationLookup.requireReserved(item.reservationNoFor(order.orderNo()),
+                        item.inventorySkuCode(), item.quantity());
+            }
+        }
         return OrderDetail.from(orderRepository.save(order));
     }
 
@@ -198,14 +212,6 @@ public class OrderApplicationService {
     private static Address toAddress(CreateOrderCommand command) {
         return new Address(command.receiverName(), command.receiverPhone(),
                 command.receiverAddress());
-    }
-
-    /**
-     * 跨 BC 身份翻译的临时占位：订单侧 SKU 用数字 id，库存侧用 SKU 编码。
-     * 正式翻译由商品 BC / 跨 BC 契约提供（防腐层讲次落地），本讲先用确定映射。
-     */
-    private String toInventorySkuCode(Long skuId) {
-        return "SKU-" + skuId;
     }
 
     private void sleepQuietly(long seconds) {

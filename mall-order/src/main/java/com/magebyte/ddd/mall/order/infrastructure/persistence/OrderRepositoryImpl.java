@@ -142,11 +142,11 @@ public class OrderRepositoryImpl implements OrderRepository {
             throw new OrderDomainException("订单已被并发修改，请基于最新版本重试 (id="
                     + order.id() + ")");
         }
-        // 订单项在聚合内只增不删，简单起见整批对齐：先清后插
-        orderItemMapper.delete(Wrappers.<OrderItemDO>lambdaQuery()
-                .eq(OrderItemDO::getOrderId, order.id()));
+        // 已有行的成交快照不可变；状态更新只插新行，保留存量记录和行身份。
         for (OrderItem item : order.getItems()) {
-            orderItemMapper.insert(toItemDO(order.id(), item));
+            if (item.id() == null) {
+                orderItemMapper.insert(toItemDO(order.id(), item));
+            }
         }
         // 状态历史只增不改：库里已有几节，就只追加新增的尾段
         List<StatusChange> history = order.statusHistory();
@@ -165,11 +165,15 @@ public class OrderRepositoryImpl implements OrderRepository {
         }
         List<OrderItemDO> itemDOs = orderItemMapper.selectList(
                 Wrappers.<OrderItemDO>lambdaQuery()
-                        .eq(OrderItemDO::getOrderId, orderDO.getId()));
+                        .eq(OrderItemDO::getOrderId, orderDO.getId())
+                        .orderByAsc(OrderItemDO::getId));
         List<OrderItem> items = new ArrayList<>(itemDOs.size());
         for (OrderItemDO itemDO : itemDOs) {
             items.add(OrderItem.reconstitute(
                     itemDO.getId(),
+                    itemDO.getLineId(),
+                    itemDO.getReservationNo(),
+                    itemDO.getPurchaseRequestNo(),
                     itemDO.getProductId(),
                     itemDO.getSkuId(),
                     itemDO.getProductName(),
@@ -246,6 +250,9 @@ public class OrderRepositoryImpl implements OrderRepository {
     private OrderItemDO toItemDO(Long orderId, OrderItem item) {
         OrderItemDO itemDO = new OrderItemDO();
         itemDO.setOrderId(orderId);
+        itemDO.setLineId(item.lineId());
+        itemDO.setReservationNo(item.reservationNo());
+        itemDO.setPurchaseRequestNo(item.purchaseRequestNo());
         itemDO.setProductId(item.productId());
         itemDO.setSkuId(item.skuId());
         itemDO.setProductName(item.productName());

@@ -3,7 +3,6 @@ package com.magebyte.ddd.mall.order.interfaces.rest;
 import com.magebyte.ddd.mall.commons.response.Result;
 import com.magebyte.ddd.mall.order.application.CancelOrderCommand;
 import com.magebyte.ddd.mall.order.application.CatalogOrderService;
-import com.magebyte.ddd.mall.order.application.CreateOrderCommand;
 import com.magebyte.ddd.mall.order.application.OrderApplicationService;
 import com.magebyte.ddd.mall.order.application.OrderDetail;
 import com.magebyte.ddd.mall.order.application.PayOrderCommand;
@@ -49,17 +48,7 @@ public class OrderController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Result<OrderDetailResponse> create(@Valid @RequestBody CreateOrderRequest request) {
-        OrderDetail detail = catalogOrders.create(new CreateOrderCommand(
-                request.userId(),
-                request.productId(),
-                request.skuId(),
-                request.productName(),
-                request.quantity(),
-                request.unitPrice(),
-                request.receiverName(),
-                request.receiverPhone(),
-                request.receiverAddress(),
-                request.isSimulateRollbackFailure()));
+        OrderDetail detail = catalogOrders.create(request.toCommand());
         return Result.ok(OrderDetailResponse.from(detail));
     }
 

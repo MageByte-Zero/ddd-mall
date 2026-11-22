@@ -12,14 +12,17 @@ import com.magebyte.ddd.mall.order.domain.event.OrderShippedEvent;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 订单（Order）聚合根。
  *
- * <p>订单聚合 = 订单根实体 + 订单项实体 + Money/Address 值对象。
+ * <p>订单聚合包含订单行、退款申请以及 Money/Address 等值对象。
  * 聚合是数据修改与持久化的基本单元：外部只能通过本类的方法修改聚合内部，
  * 一致性由本类守护，一个聚合对应一个仓储（{@link OrderRepository}）。
  *
@@ -33,6 +36,7 @@ import java.util.concurrent.ThreadLocalRandom;
  *       节与节首尾相接，末节的 to 永远等于当前状态；</li>
  *   <li>实付金额必须等于应付金额——需求里没有部分支付，领域层不留口子；</li>
  *   <li>进入 PAID / CANCELLED 后订单项冻结，不允许再增改；</li>
+ *   <li>已退和在途的部分退款按行不超过购买量，按订单不超过实付；</li>
  *   <li>事件可达：订单创建和每次合法状态迁移都抛出对应的领域事件
  *       （OrderCreated / OrderPaid / OrderShipped / OrderReceived /
  *       OrderCancelled / RefundRequested / RefundCompleted），事件先收集在聚合内部，
@@ -59,6 +63,7 @@ public class Order {
     private Money totalAmount;
     private Money paidAmount;
     private Refund refund;
+    private final Map<String, PartialRefund> partialRefunds = new LinkedHashMap<>();
     private Address address;
     private Integer version;
     private LocalDateTime createdAt;
@@ -109,6 +114,15 @@ public class Order {
                                      List<OrderItem> items, List<StatusChange> statusHistory,
                                      Money totalAmount, Money paidAmount, Address address, Integer version,
                                      LocalDateTime createdAt, LocalDateTime updatedAt, Refund refund) {
+        return reconstitute(id, orderNo, userId, status, items, statusHistory, totalAmount,
+                paidAmount, address, version, createdAt, updatedAt, refund, List.of());
+    }
+
+    public static Order reconstitute(Long id, String orderNo, Long userId, OrderStatus status,
+                                     List<OrderItem> items, List<StatusChange> statusHistory,
+                                     Money totalAmount, Money paidAmount, Address address, Integer version,
+                                     LocalDateTime createdAt, LocalDateTime updatedAt, Refund refund,
+                                     List<PartialRefund> partialRefunds) {
         Objects.requireNonNull(id, "持久化订单的 id 不能为空");
         Objects.requireNonNull(orderNo, "持久化订单的订单号不能为空");
         Objects.requireNonNull(userId, "持久化订单的用户ID不能为空");
@@ -161,7 +175,38 @@ public class Order {
         order.version = version;
         order.createdAt = createdAt;
         order.updatedAt = updatedAt;
+        order.restorePartialRefunds(partialRefunds);
         return order;
+    }
+
+    private void restorePartialRefunds(List<PartialRefund> persisted) {
+        if (persisted.isEmpty()) {
+            return;
+        }
+        if (refund != null || paidAmount == null || !List.of(OrderStatus.PAID, OrderStatus.SHIPPED,
+                OrderStatus.RECEIVED).contains(status)) {
+            throw new OrderDomainException("部分退款记录与订单状态或退款模式冲突");
+        }
+        Map<String, Long> usedByLine = new HashMap<>();
+        Money usedAmount = Money.zero();
+        for (PartialRefund entry : persisted) {
+            OrderItem line = requireRefundLine(entry.lineId());
+            if (entry.quantity() > line.quantity() || !line.unitPrice().multiply(entry.quantity()).equals(entry.amount())
+                    || (entry.requestedFrom() == OrderStatus.SHIPPED && status == OrderStatus.PAID)
+                    || partialRefunds.putIfAbsent(entry.refundNo(), entry) != null) {
+                throw new OrderDomainException("持久化的部分退款与成交行、履约状态或申请身份不一致");
+            }
+            if (entry.countsAgainstLimit()) {
+                long usedQuantity = usedByLine.merge(line.lineId(), (long) entry.quantity(), Long::sum);
+                if (usedQuantity > line.quantity()) {
+                    throw new OrderDomainException("部分退款超过订单行数量");
+                }
+                usedAmount = usedAmount.plus(entry.amount());
+            }
+        }
+        if (usedAmount.isGreaterThan(paidAmount)) {
+            throw new OrderDomainException("部分退款超过订单实付金额");
+        }
     }
 
     /**
@@ -301,6 +346,9 @@ public class Order {
             if (refund.sameRequest(refundNo, amount, reason)) return;
             throw new OrderDomainException("已有整单退款申请，身份或参数冲突");
         }
+        if (!partialRefunds.isEmpty()) {
+            throw new OrderDomainException("订单已使用部分退款，不能切换为整单退款");
+        }
         assertTransition(OrderStatus.REFUND_REQUESTED);
         if (!Objects.equals(paidAmount, amount))
             throw new OrderDomainException("整单退款金额必须等于实付");
@@ -325,6 +373,78 @@ public class Order {
 
     /** 不可变的实体快照，调用方不能越过聚合修改退款。 */
     public Refund refund() { return refund; }
+
+    /** 返回是否发生新写入。同号同参在任何后续履约或退款状态均可重放。 */
+    public boolean requestPartialRefund(String refundNo, String lineId, int quantity, String reason, LocalDateTime when) {
+        Objects.requireNonNull(when, "退款申请时间不能为空");
+        PartialRefund previous = partialRefunds.get(refundNo);
+        if (previous != null) {
+            if (!previous.sameRequest(lineId, quantity, reason)) {
+                throw new OrderDomainException("同一部分退款申请号的参数冲突");
+            }
+            return false;
+        }
+        if (refund != null) {
+            throw new OrderDomainException("订单已使用整单退款，不能切换为部分退款");
+        }
+        if ((status != OrderStatus.PAID && status != OrderStatus.SHIPPED) || paidAmount == null) {
+            throw new OrderDomainException("部分退款须在已付款或已发货时申请");
+        }
+        OrderItem line = requireRefundLine(lineId);
+        if (quantity <= 0) {
+            throw new OrderDomainException("部分退款数量须为正整数");
+        }
+        Money amount = line.unitPrice().multiply(quantity);
+        long usedQuantity = 0;
+        Money usedAmount = Money.zero();
+        for (PartialRefund entry : partialRefunds.values()) {
+            if (entry.countsAgainstLimit()) {
+                if (entry.lineId().equals(lineId)) {
+                    usedQuantity += entry.quantity();
+                }
+                usedAmount = usedAmount.plus(entry.amount());
+            }
+        }
+        if (usedQuantity + quantity > line.quantity()) {
+            throw new OrderDomainException("部分退款超过订单行数量");
+        }
+        if (usedAmount.plus(amount).isGreaterThan(paidAmount)) {
+            throw new OrderDomainException("部分退款超过订单实付金额");
+        }
+        partialRefunds.put(refundNo, new PartialRefund(refundNo, lineId, quantity, amount, reason, status, null));
+        updatedAt = when;
+        return true;
+    }
+
+    public boolean recordPartialRefundResult(RefundResult result, LocalDateTime when) {
+        Objects.requireNonNull(result, "退款结果不能为空");
+        Objects.requireNonNull(when, "退款结果时间不能为空");
+        PartialRefund current = partialRefund(result.refundNo());
+        PartialRefund updated = current.withResult(result);
+        if (updated == current) {
+            return false;
+        }
+        partialRefunds.put(updated.refundNo(), updated);
+        updatedAt = when;
+        return true;
+    }
+
+    public PartialRefund partialRefund(String refundNo) {
+        PartialRefund entry = partialRefunds.get(refundNo);
+        if (entry == null) {
+            throw new OrderDomainException("本订单不存在该部分退款申请");
+        }
+        return entry;
+    }
+
+    public List<PartialRefund> partialRefunds() {
+        return List.copyOf(partialRefunds.values());
+    }
+
+    private OrderItem requireRefundLine(String lineId) {
+        return items.stream().filter(line -> line.lineId().equals(lineId)).findFirst()
+                .orElseThrow(() -> new OrderDomainException("本订单不存在该退款行"));
+    }
 
     /** 对外只暴露不可变快照：聚合内部列表不逃逸。 */
     public List<OrderItem> getItems() {

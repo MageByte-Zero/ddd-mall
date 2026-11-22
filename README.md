@@ -156,6 +156,44 @@ python3 fixtures/verification/order-lines.py --baseline-root ../ddd-mall-l19
 
 夹具先用旧版应用创建真实订单和 v2 发货事件，再换新版应用复用测试数据库。结果中 `legacy` 记录旧预占及 v2 去重，`secondLineRollsBack` 记录整单失败前后的库存与副作用，`shipment` 可用来核对原两行和重投后的出库数量。升级实际存量时，先停止旧订单写入、升级库存消费者，再迁移订单库并启动新版订单写入。[订单行需求](fixtures/requirements/order-lines.md) · [发货事件契约](fixtures/contracts/order-events.yaml)
 
+### 第 21 讲订单行部分退款
+
+在 `mall-order` 使用 `RefundApplicationService.requestPartialRefund(PartialRefundCommand)` 登记申请，用 `recordPartialResult(orderNo, result)` 回记已翻译的结果。申请传订单号、退款申请号、订单行身份、数量和原因，成交金额由订单计算。本讲用 Java 集成测试驱动这两个入口。
+
+从本仓库根目录执行。需要 JDK 21、Maven 和既有 DDD 中间件。创建独立 MySQL 练习库，把测试连接指向该库。下例使用 Compose 的 MySQL 服务及 root 账号，已有 `ddd` 容器可以直接复用。
+
+```bash
+docker compose -p ddd -f docker-compose/docker-compose.yml up -d mysql nacos rocketmq-namesrv rocketmq-broker
+export SPRING_DATASOURCE_URL='jdbc:mysql://127.0.0.1:3306/mall_order_l21?useSSL=false&allowPublicKeyRetrieval=true'
+export SPRING_DATASOURCE_USERNAME=root
+export SPRING_DATASOURCE_PASSWORD="$(docker compose -p ddd -f docker-compose/docker-compose.yml exec -T mysql sh -c 'printf %s "$MYSQL_ROOT_PASSWORD"')"
+
+printf 'CREATE DATABASE mall_order_l21;\n' | docker compose -p ddd -f docker-compose/docker-compose.yml exec -T mysql \
+  sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot'
+docker compose -p ddd -f docker-compose/docker-compose.yml exec -T mysql \
+  sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot mall_order_l21' \
+  < mall-order/src/main/resources/db/migration/V1__init_order_schema.sql
+
+mvn -B -pl mall-order -am -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dtest=PartialRefundPersistenceTest,FullRefundPersistenceTest,FullRefundTest test
+```
+
+检查 `L21_OVER_LIMIT`、`L21_LEGAL_BOTH` 和 `L21_SAME_NUMBER`。它们分别记录超额处理、合法不同申请和同号重试。并发测试通过两条 MySQL 连接读取同一版本，再使用实际应用服务提交。若要跑全模块订单回归，先停止其他使用同一个订单日志消费组的测试应用。
+
+验证 V4 到 V5 的升级时，按上面的方式另准备一个隔离空库，导入 V1 并把连接环境变量指向该库。使用下面的两个快照依次写入和重读，不在两个阶段之间清空或更换数据库。
+
+```bash
+git worktree add --detach ../ddd-mall-l20 lesson-20
+upgrade_test=mall-order/src/test/java/com/magebyte/ddd/mall/order/application/PartialRefundUpgradeVerification.java
+cp "$upgrade_test" "../ddd-mall-l20/$upgrade_test"
+(cd ../ddd-mall-l20 && mvn -B -pl mall-order -am -Dsurefire.failIfNoSpecifiedTests=false \
+  '-Dtest=PartialRefundUpgradeVerification#seedV4' test)
+mvn -B -pl mall-order -am -Dsurefire.failIfNoSpecifiedTests=false \
+  '-Dtest=PartialRefundUpgradeVerification#readV5' test
+```
+
+`seedV4` 先复现 ¥50 请求被旧整单入口拒绝，再写下两笔旧整单状态。看到 `L21_V5` 时，V5 已重读旧数据，并能通过原入口完成此前在途的整单申请。实际升级先停止旧版本写入，再运行迁移并启用新版。部分退款开始登记后，如需停收新申请，保留新版读取和回记在途申请的能力。[部分退款需求](fixtures/requirements/partial-refund.md) · [额度一致性决策](docs/adr/ADR-12-order-owned-refund-capacity.md)
+
 ## 脚本一览
 
 | 脚本 | 职责 |

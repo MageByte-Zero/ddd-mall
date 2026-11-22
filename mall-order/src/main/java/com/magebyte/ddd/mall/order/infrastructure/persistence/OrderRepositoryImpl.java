@@ -6,19 +6,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.magebyte.ddd.mall.order.domain.Address;
 import com.magebyte.ddd.mall.order.domain.Money;
 import com.magebyte.ddd.mall.order.domain.Order;
-import com.magebyte.ddd.mall.order.domain.OrderDomainException;
 import com.magebyte.ddd.mall.order.domain.OrderItem;
 import com.magebyte.ddd.mall.order.domain.OrderRepository;
 import com.magebyte.ddd.mall.order.domain.OrderStatus;
+import com.magebyte.ddd.mall.order.domain.OrderVersionConflictException;
+import com.magebyte.ddd.mall.order.domain.PartialRefund;
 import com.magebyte.ddd.mall.order.domain.StatusChange;
 import com.magebyte.ddd.mall.order.domain.Refund;
 import com.magebyte.ddd.mall.order.domain.RefundResult;
 import com.magebyte.ddd.mall.order.domain.event.DomainEvent;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -29,7 +34,7 @@ import java.util.Optional;
  * 注入给需要仓储的组件——领域层全程不 import 任何持久化技术。
  *
  * <p>翻译职责：聚合 ↔ 数据对象的双向转换都集中在这里。
- * 存入时拆成订单表 + 订单项表两张表；读出时重组回完整聚合并过一遍
+ * 存入时拆成订单根记录和从属记录；读出时重组回完整聚合并过一遍
  * {@link Order#reconstitute} 的不变量校验。
  *
  * <p>Outbox 模式（第 9 讲）：聚合取出的领域事件不再在事务提交后直接发 MQ，
@@ -52,6 +57,7 @@ public class OrderRepositoryImpl implements OrderRepository {
     private final OrderStatusHistoryMapper statusHistoryMapper;
     private final OutboxEventMapper outboxEventMapper;
     private final ObjectMapper objectMapper;
+    private final JdbcClient jdbc;
 
     @Value("${ddd.payment.new-orders-enabled:false}")
     private boolean paymentManagedForNewOrders;
@@ -59,12 +65,13 @@ public class OrderRepositoryImpl implements OrderRepository {
     public OrderRepositoryImpl(OrderMapper orderMapper, OrderItemMapper orderItemMapper,
                                OrderStatusHistoryMapper statusHistoryMapper,
                                OutboxEventMapper outboxEventMapper,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper, JdbcClient jdbc) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.statusHistoryMapper = statusHistoryMapper;
         this.outboxEventMapper = outboxEventMapper;
         this.objectMapper = objectMapper;
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -107,12 +114,14 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<Order> findById(Long id) {
         OrderDO orderDO = orderMapper.selectById(id);
         return toAggregate(orderDO);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<Order> findByOrderNo(String orderNo) {
         OrderDO orderDO = orderMapper.selectOne(
                 Wrappers.<OrderDO>lambdaQuery().eq(OrderDO::getOrderNo, orderNo));
@@ -129,6 +138,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         for (StatusChange change : order.statusHistory()) {
             statusHistoryMapper.insert(toHistoryDO(orderDO.getId(), change));
         }
+        savePartialRefunds(orderDO.getId(), order.partialRefunds());
         return findById(orderDO.getId()).orElseThrow();
     }
 
@@ -139,8 +149,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         // 乐观锁：updateById 自动带 version 条件，并发修改时影响行数为 0
         int affected = orderMapper.updateById(orderDO);
         if (affected == 0) {
-            throw new OrderDomainException("订单已被并发修改，请基于最新版本重试 (id="
-                    + order.id() + ")");
+            throw new OrderVersionConflictException(order.id());
         }
         // 已有行的成交快照不可变；状态更新只插新行，保留存量记录和行身份。
         for (OrderItem item : order.getItems()) {
@@ -156,6 +165,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         for (int i = (int) persisted; i < history.size(); i++) {
             statusHistoryMapper.insert(toHistoryDO(order.id(), history.get(i)));
         }
+        savePartialRefunds(order.id(), order.partialRefunds());
         return findById(order.id()).orElseThrow();
     }
 
@@ -209,7 +219,49 @@ public class OrderRepositoryImpl implements OrderRepository {
                 orderDO.getVersion(),
                 orderDO.getCreatedAt(),
                 orderDO.getUpdatedAt(),
-                toRefund(orderDO)));
+                toRefund(orderDO),
+                loadPartialRefunds(orderDO.getId())));
+    }
+
+    private List<PartialRefund> loadPartialRefunds(long orderId) {
+        return jdbc.sql("""
+                SELECT refund_no, line_id, quantity, amount, reason, requested_from, outcome, result_reference
+                FROM t_order_partial_refund WHERE order_id = ? ORDER BY refund_no
+                """).param(orderId).query((row, index) -> {
+                    String refundNo = row.getString("refund_no");
+                    Money amount = Money.of(row.getBigDecimal("amount"));
+                    String outcome = row.getString("outcome");
+                    RefundResult result = outcome == null ? null : new RefundResult(refundNo, amount,
+                            RefundResult.Outcome.valueOf(outcome), row.getString("result_reference"));
+                    return new PartialRefund(refundNo, row.getString("line_id"), row.getInt("quantity"),
+                            amount, row.getString("reason"), OrderStatus.valueOf(row.getString("requested_from")), result);
+                }).list();
+    }
+
+    private void savePartialRefunds(long orderId, List<PartialRefund> refunds) {
+        if (refunds.isEmpty()) {
+            return;
+        }
+        Map<String, PartialRefund> persisted = new HashMap<>();
+        loadPartialRefunds(orderId).forEach(refund -> persisted.put(refund.refundNo(), refund));
+        for (PartialRefund refund : refunds) {
+            PartialRefund previous = persisted.get(refund.refundNo());
+            RefundResult result = refund.result();
+            if (previous == null) {
+                jdbc.sql("""
+                        INSERT INTO t_order_partial_refund
+                            (order_id, refund_no, line_id, quantity, amount, reason, requested_from, outcome, result_reference)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """).params(orderId, refund.refundNo(), refund.lineId(), refund.quantity(),
+                        refund.amount().amount(), refund.reason(), refund.requestedFrom().name(),
+                        result == null ? null : result.outcome().name(), result == null ? null : result.reference()).update();
+            } else if (!refund.equals(previous)) {
+                jdbc.sql("""
+                        UPDATE t_order_partial_refund SET outcome = ?, result_reference = ?
+                        WHERE order_id = ? AND refund_no = ?
+                        """).params(result.outcome().name(), result.reference(), orderId, refund.refundNo()).update();
+            }
+        }
     }
 
     private Refund toRefund(OrderDO row) {

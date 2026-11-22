@@ -114,7 +114,7 @@ public class PaymentController {
                 payment.confirmedAt(), payment.confirmedAt() == null ? null : outbox.status(payment.paymentNo()));
     }
 
-    private static void authorize(String expected, String token) {
+    static void authorize(String expected, String token) {
         if (!MessageAuthentication.matches(expected, token)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         }

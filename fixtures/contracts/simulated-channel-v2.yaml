@@ -1,0 +1,101 @@
+openapi: 3.0.3
+info:
+  title: Simulated channel V2 observation
+  version: 1.0.0
+  description: >
+    Teaching protocol for the same SIMULATED channel as V1. Callback paths
+    select the protocol. A request reference identifies acceptance only.
+paths:
+  /api/payments/callbacks/simulated/v2:
+    post:
+      security: [{simulatedV2: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Report'}
+      responses:
+        '200':
+          description: Processed observation, including receipt without payment confirmation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+        '400':
+          description: Invalid V2 report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+        '401': {description: Invalid V2 callback credential}
+        '422':
+          description: Declined request, unsupported result, or evidence rejected by payment rules
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+  /api/payments/{paymentNo}/simulated-query:
+    post:
+      security: [{operator: []}]
+      parameters:
+        - $ref: '#/components/parameters/PaymentNo'
+      responses:
+        '200':
+          description: >
+            Observation processed. In particular QUERY_TIMEOUT or QUERY_UNAVAILABLE
+            leaves the payment unchanged. This HTTP status does not prove collection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+        '401': {description: Invalid teaching operator credential}
+        '404': {description: Unknown local payment}
+        '422':
+          description: Invalid or conflicting channel observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+  /payments/{paymentNo}:
+    get:
+      summary: Read the original reference on the configured teaching channel (upstream path)
+      parameters:
+        - $ref: '#/components/parameters/PaymentNo'
+      responses:
+        '200':
+          description: Report tied to the queried merchantRef. SUCCESS means accepted only.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Report'}
+components:
+  securitySchemes:
+    simulatedV2: {type: apiKey, in: header, name: X-Simulated-Callback-Token}
+    operator: {type: apiKey, in: header, name: X-Payment-Handoff-Token}
+  parameters:
+    PaymentNo:
+      name: paymentNo
+      in: path
+      required: true
+      schema: {type: string, maxLength: 48, pattern: '^[A-Za-z0-9_-]+$'}
+  schemas:
+    Report:
+      type: object
+      required: [merchantRef, merchantOrderRef, amountMajor, currency, result]
+      properties:
+        merchantRef: {type: string, maxLength: 48, pattern: '^[A-Za-z0-9_-]+$'}
+        merchantOrderRef: {type: string, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}
+        amountMajor:
+          type: string
+          pattern: '^[0-9]{1,17}\.[0-9]{2}$'
+          description: Positive decimal in major units. Its exact minor units must fit in a signed int64. The existing payment must match both amount and currency.
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+        requestRef: {type: string, description: Optional acceptance reference, never used to identify collection}
+        receiptNo: {type: string, nullable: true, maxLength: 80, pattern: '^[A-Za-z0-9_-]+$', description: Required for CAPTURED}
+        result:
+          type: string
+          enum: [SUCCESS, PROCESSING, CAPTURED, DECLINED, UNKNOWN]
+          description: SUCCESS is acceptance, CAPTURED is evidence of collection, and DECLINED concerns this request.
+    Receipt:
+      type: object
+      required: [result, paymentStatus, reason]
+      properties:
+        result:
+          type: string
+          enum: [NO_NEW_CONFIRMATION, CONFIRMED, ALREADY_CONFIRMED, REJECTED]
+        paymentStatus: {type: string, nullable: true, enum: [PENDING, SUCCEEDED]}
+        reason: {type: string, nullable: true}

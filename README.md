@@ -97,6 +97,36 @@ cd ddd-mall
 
 > 不想用脚本？中间件等价于 `cd docker-compose && docker compose up -d`；业务模块等价于 `./mvnw clean package -DskipTests` 后 `java -jar mall-<name>/target/mall-<name>-0.1.0-SNAPSHOT.jar`。脚本只是把这些命令串起来并加上 PID 管理、就绪探测和端口校验。
 
+### 第 19 讲支付防腐层
+
+Java 实现位于 `mall-payment`。先读 `infrastructure/SimulatedV2Protocol` 如何翻译渠道结果，再沿着 `application/ObserveSimulatedPayment`、`application/PaymentCallbackService` 和 `domain/Payment` 找到查单、事务和支付规则。接口报文见 [V2 契约](fixtures/contracts/simulated-channel-v2.yaml)。
+
+验证受理、超时、并发确认和 V1 升级时，以本仓库源码根目录为当前目录。需要 JDK 21、Maven、Docker Compose 和 Python 3。业务进程由夹具启动并退出，夹具还会提供可控的模拟查单端点。它使用独立的 MySQL 库和支付 topic，输出结果和日志位置。
+
+```bash
+docker compose -p ddd -f docker-compose/docker-compose.yml up -d mysql nacos rocketmq-namesrv rocketmq-broker seata-server
+docker exec ddd-rocketmq-broker sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t order-events
+mvn -B -DskipTests package
+
+git clone --depth 1 --branch lesson-18 https://github.com/MageByte-Zero/ddd-mall.git ../ddd-mall-l18
+(cd ../ddd-mall-l18 && mvn -B -pl mall-payment -am -DskipTests package)
+
+python3 fixtures/verification/payment-channel-v2.py \
+  --baseline-payment-jar ../ddd-mall-l18/mall-payment/target/mall-payment-0.1.0-SNAPSHOT.jar
+```
+
+输出中的 `beforeCapture` 记录受理和查单超时后数据库的状态，`captureRace` 记录两个入口交付同一收款结果后的确认与订单记录，`v1Upgrade` 记录原有支付单的兼容结果。
+
+需要重跑第 17 讲的旧订单迁移、回调重放和投递故障时，在同一源码根目录执行下列命令。新版订单用第 18 讲的商品目录下单，原夹具的支付断言继续适用。
+
+```bash
+git clone --depth 1 --branch lesson-15 https://github.com/MageByte-Zero/ddd-mall.git ../ddd-mall-l15
+(cd ../ddd-mall-l15 && mvn -B -pl mall-order -am -DskipTests package)
+
+python3 fixtures/verification/payment-channel-v2.py \
+  --lesson17-baseline-order-jar ../ddd-mall-l15/mall-order/target/mall-order-0.1.0-SNAPSHOT.jar
+```
+
 ## 脚本一览
 
 | 脚本 | 职责 |

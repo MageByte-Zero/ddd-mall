@@ -7,7 +7,7 @@ import java.util.Objects;
 public record Payment(String paymentNo, String orderNo, PaymentAmount amount, String channel,
                       String channelTxnNo, Instant confirmedAt) {
 
-    public enum ChannelResult { CONFIRMED, UNKNOWN, UNRECOGNIZED }
+    public enum ChannelResult { CONFIRMED, ACCEPTED, PROCESSING, DECLINED, UNKNOWN, UNRECOGNIZED }
 
     public record Observation(String paymentNo, String orderNo, String channelTxnNo,
                               long amountMinor, String currency, ChannelResult result) {}
@@ -15,7 +15,7 @@ public record Payment(String paymentNo, String orderNo, PaymentAmount amount, St
 
     public enum Decision {
         CONFIRM, REPLAY, PENDING, ORDER_MISMATCH, AMOUNT_MISMATCH,
-        UNSUPPORTED_RESULT, TRANSACTION_REQUIRED, CONFLICTING_SUCCESS
+        CHANNEL_REQUEST_DECLINED, UNSUPPORTED_RESULT, TRANSACTION_REQUIRED, CONFLICTING_SUCCESS
     }
 
     public String status() {
@@ -36,8 +36,15 @@ public record Payment(String paymentNo, String orderNo, PaymentAmount amount, St
         if (amount.minorUnits() != minor || !amount.currency().equals(currency)) {
             return Decision.AMOUNT_MISMATCH;
         }
-        if (result == ChannelResult.UNKNOWN) return Decision.PENDING;
-        if (result != ChannelResult.CONFIRMED) return Decision.UNSUPPORTED_RESULT;
+        return switch (result) {
+            case ACCEPTED, PROCESSING, UNKNOWN -> Decision.PENDING;
+            case DECLINED -> Decision.CHANNEL_REQUEST_DECLINED;
+            case UNRECOGNIZED -> Decision.UNSUPPORTED_RESULT;
+            case CONFIRMED -> assessCollection(txn);
+        };
+    }
+
+    private Decision assessCollection(String txn) {
         if (txn == null || txn.isBlank()) return Decision.TRANSACTION_REQUIRED;
         if (confirmedAt == null) return Decision.CONFIRM;
         return Objects.equals(channelTxnNo, txn) ? Decision.REPLAY : Decision.CONFLICTING_SUCCESS;

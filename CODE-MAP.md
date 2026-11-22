@@ -332,3 +332,9 @@
 - 订单 POST /api/orders 由 CatalogOrderService 先经 CatalogLookup 和 Feign 读取已提交的一份目录快照，目录业务拒绝为 422，上游不可用为 503。携带旧单价时只作为比价条件。
 - 进入原 OrderApplicationService.createOrder 后，OrderItem 保存目录取到的名称和单价，并沿原 AT 路径处理库存。订单和支付读取既有成交快照，订单 schema 无新增迁移。
 - 契约 fixtures/contracts/order-to-catalog.yaml，真实进程夹具 fixtures/verification/catalog-order.py，第 17 讲夹具以其发布快照复跑。
+
+## 第 19 讲 · 模拟渠道 V2 与支付防腐层
+
+- `SimulatedV2Controller` 增加 `POST /api/payments/callbacks/simulated/v2` 和 `POST /api/payments/{paymentNo}/simulated-query`，分别使用独立的 V2 模拟回调凭据及既有操作凭据。原 V1 回调、开单和支付查询契约保留。
+- `SimulatedV2Protocol` 将渠道受理、处理中、收款、拒绝和未知翻译为本地观察，验证引用、精确金额和应答格式。`ObserveSimulatedPayment` 经 `PaymentChannelQuery` 查询原单，`SimulatedV2QueryClient` 调用配置的教学端点并阻止跨单应答。查单超时保留原单状态。
+- 可信观察由原 `PaymentCallbackService` 与 `Payment.observe` 决定能否确认。支付主状态、MySQL 结构和 `PaymentSucceeded` 公开契约继续沿用第 17 讲；回调与查单共享原确认事务和 Outbox。V2 契约和过程验证分别见 `fixtures/contracts/simulated-channel-v2.yaml`、`fixtures/verification/payment-channel-v2.py`。

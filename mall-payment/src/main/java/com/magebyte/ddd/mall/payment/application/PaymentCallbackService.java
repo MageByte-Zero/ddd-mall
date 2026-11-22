@@ -31,7 +31,11 @@ public class PaymentCallbackService {
         var assessment = payment.observe(observation, Instant.now().truncatedTo(ChronoUnit.MICROS));
         return switch (assessment.decision()) {
             case REPLAY -> new Receipt("ALREADY_CONFIRMED", payment.status(), null);
-            case PENDING -> new Receipt("NO_NEW_CONFIRMATION", payment.status(), null);
+            case PENDING -> new Receipt("NO_NEW_CONFIRMATION", payment.status(), switch (observation.result()) {
+                case ACCEPTED -> "CHANNEL_ACCEPTED";
+                case PROCESSING -> "CHANNEL_PROCESSING";
+                default -> null;
+            });
             case CONFIRM -> confirm(assessment.payment(), observation, reportedResult);
             default -> review(observation, reportedResult, payment.status(), assessment.decision().name());
         };
